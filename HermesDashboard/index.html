@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hermes Command — Night City Ops</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap"
+        rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">⚡ HERMES <span>COMMAND</span></div>
+    <button class="models-btn" onclick="toggleModelsPanel()">🧠 AI Models</button>
+    <button class="models-btn console-btn" onclick="toggleConsole()">⌨️ Console</button>
+    <div class="agent-status" id="agent-status">
+      <span class="dot"></span>
+      <span class="label">Agent offline // simulated data-feed</span>
+    </div>
+  </header>
+
+  <nav class="primary-tabs">
+    <button class="primary-tab active" data-tab="finance" onclick="setPrimary('finance')">
+      <span class="icon">💰</span>Finance
+    </button>
+    <button class="primary-tab" data-tab="research" onclick="setPrimary('research')">
+      <span class="icon">🔎</span>Research
+    </button>
+    <button class="primary-tab" data-tab="etsy" onclick="setPrimary('etsy')">
+      <span class="icon">🛍️</span>Etsy Businesses
+    </button>
+    <button class="primary-tab" data-tab="fiverr" onclick="setPrimary('fiverr')">
+      <span class="icon">🎬</span>Fiverr Businesses
+    </button>
+    <button class="primary-tab" data-tab="zendrop" onclick="setPrimary('zendrop')">
+      <span class="icon">📦</span>ZenDrop
+    </button>
+  </nav>
+
+  <main id="content"></main>
+  <div id="modal"></div>
+  <div id="console"></div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

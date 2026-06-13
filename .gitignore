@@ -1,0 +1,15 @@
+# Secrets — never commit
+.env
+*.env
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Runtime state (regenerated from seed in store.js)
+state.json
+
+# Local tooling / OS
+.tools/
+.DS_Store
+*.log

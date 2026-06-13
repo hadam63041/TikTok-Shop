@@ -1,0 +1,13 @@
+{
+  "name": "hermes-agent",
+  "version": "0.1.0",
+  "description": "Hermes — AI business operations agent powering the Hermes Command dashboard",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1"
+  }
+}
