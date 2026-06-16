@@ -21,6 +21,8 @@ services:
       # When we wire the Hermes-platform bridge (OAuth OpenAI), these get used:
       HERMES_URL: ${HERMES_URL:-}
       HERMES_PAIRING_TOKEN: ${HERMES_PAIRING_TOKEN:-}
+      # MCP: secret your Hermes agent presents to call this dashboard's tools.
+      MCP_TOKEN: ${MCP_TOKEN:-}
       # Business connectors (optional — leave blank to keep them in simulation):
       SERPAPI_KEY: ${SERPAPI_KEY:-}
       PRINTIFY_API_TOKEN: ${PRINTIFY_API_TOKEN:-}

@@ -72,6 +72,24 @@ In your Hermes platform's UI, add a link/tile to `http://<your-vps-ip>:8788`
 (Hermes supports custom dashboard links/plugins). Now you can open Hermes Command
 straight from the Hermes agent.
 
+## Step 6 — Give your Hermes agent the business tools (MCP)
+
+This is what lets your Hermes agent — using its **OAuth OpenAI/Codex brain** —
+actually *operate the shops* (research, list/publish to Etsy via Printify, etc.).
+Hermes Command exposes those tools over MCP at `…/mcp`.
+
+1. Set a secret in `deploy.env`: `MCP_TOKEN=$(openssl rand -hex 24)` and redeploy.
+2. In your Hermes platform → **MCP servers → Add**, add a remote/URL server:
+   - **URL:** `http://<your-vps-ip>:8788/mcp` (or, if Hermes and this container
+     share a Docker network, `http://hermes-command:8787/mcp`)
+   - **Auth header:** `Authorization: Bearer <the MCP_TOKEN you set>`
+3. Test the connection in Hermes — it should list ~22 tools (Printify, research,
+   design, listing, Zendrop, ad budget…). Your Hermes agent can now run them.
+
+> ⚠️ These are **live** tools — they can publish real Etsy listings and change ad
+> budgets. The `MCP_TOKEN` is what gates access, so use a strong one. The tool
+> descriptions tell the agent to confirm customer-visible/spending actions first.
+
 ---
 
 ## Optional — a real subdomain with HTTPS

@@ -31,6 +31,7 @@ const { printifyStatus, printifyShops, printifyProducts, printifyConfigured,
         printifyCatalog, printifyBlueprintDetail, printifyListToEtsy, printifyEtsyShop,
         printifyDelist, printifyListingFacts } = await import("./printify.js");
 const { generateListingCopy } = await import("./describe.js");
+const { handleMcpRpc } = await import("./mcp.js");
 const roster = createRoster();
 const agent = roster.get("hermes"); // back-compat: /api/agent/* talks to the orchestrator
 
@@ -289,6 +290,21 @@ const server = http.createServer(async (req, res) => {
   const query = new URLSearchParams(queryString ?? "");
 
   if (req.method === "OPTIONS") return json(res, 204, {});
+
+  // MCP endpoint — lets the third-party Hermes platform (OAuth brain) call our
+  // business tools. JSON-RPC 2.0 over POST; optional bearer auth via MCP_TOKEN.
+  if (urlPath === "/mcp") {
+    if (req.method !== "POST") return json(res, 405, { error: "MCP endpoint is POST-only" });
+    if (process.env.MCP_TOKEN && req.headers.authorization !== `Bearer ${process.env.MCP_TOKEN}`) {
+      return json(res, 401, { error: "unauthorized" });
+    }
+    let body;
+    try { body = await readBody(req); } catch { return json(res, 400, { error: "invalid JSON" }); }
+    const result = await handleMcpRpc(body);
+    if (result === null) { res.writeHead(202).end(); return; } // notification
+    return json(res, 200, result);
+  }
+
   if (!urlPath.startsWith("/api")) return serveStatic(req, res);
 
   try {
