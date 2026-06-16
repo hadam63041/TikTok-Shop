@@ -10,10 +10,17 @@ services:
     ports:
       - "8788:8787"            # host:container — open 8788 on the VPS (change if taken)
     environment:
-      AGENT_BACKEND: openai     # run the agent roster on OpenAI / Codex
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      # Brain options:
+      #  - leave as-is with no key → dashboard runs; agent chat stays offline
+      #    until you wire it to your Hermes platform's OAuth brain (see DEPLOY.md).
+      #  - set OPENAI_API_KEY → agents run directly on OpenAI/Codex.
+      AGENT_BACKEND: ${AGENT_BACKEND:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}     # optional — blank if using the Hermes OAuth brain
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5}
       STATE_FILE: /data/state.json
+      # When we wire the Hermes-platform bridge (OAuth OpenAI), these get used:
+      HERMES_URL: ${HERMES_URL:-}
+      HERMES_PAIRING_TOKEN: ${HERMES_PAIRING_TOKEN:-}
       # Business connectors (optional — leave blank to keep them in simulation):
       SERPAPI_KEY: ${SERPAPI_KEY:-}
       PRINTIFY_API_TOKEN: ${PRINTIFY_API_TOKEN:-}
