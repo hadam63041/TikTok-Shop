@@ -1,0 +1,13 @@
+# Keep the image small and never bake in secrets or local junk.
+**/node_modules
+**/.env
+**/state.json
+.tools
+**/.DS_Store
+.git
+*.log
+
+# Unrelated projects / local mirrors in this workspace
+TikTok-Shop
+HumanDefenseTD
+Start Hermes.command

@@ -7,7 +7,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const STATE_FILE = path.join(__dirname, "state.json");
+// STATE_FILE is overridable so a container can persist to a mounted volume
+// (e.g. STATE_FILE=/data/state.json) instead of inside the image.
+const STATE_FILE = process.env.STATE_FILE || path.join(__dirname, "state.json");
 
 function seed() {
   return {
@@ -150,6 +152,17 @@ function seed() {
         { id: "ZD-10305", product: "Collapsible Dog Travel Bowl", qty: 3, customer: "S. Müller", status: "Processing", tracking: null, revenue: 44.97, cost: 8.25, placedAt: "2026-06-13" },
       ],
     },
+
+    // Per-unit retail prices the user sets for Printify catalog products
+    // (keyed by blueprintId). Printify's catalog API doesn't expose base cost.
+    printifyPricing: {},
+
+    // Saved design→product mockups from the Mockup Studio.
+    mockups: [],
+
+    // Imported design library (e.g. generated via Higgsfield AI). Shown in
+    // the Printify → My Designs tab; each can be listed to Etsy via Printify.
+    designLibrary: [],
 
     activity: [], // audit log of every action the agent takes
   };

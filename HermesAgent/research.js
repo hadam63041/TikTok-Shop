@@ -166,6 +166,147 @@ export function researchSources() {
   ];
 }
 
+// ============================================================================
+// SerpApi discovery feeds: Shopping trends, Event trends, Holiday trends.
+// Each is a real SerpApi engine (Google Shopping / Google Events / Google
+// Trends). Surfaced in the Research tab as three sections. All bounded so a
+// refresh stays within a sane SerpApi credit budget.
+// ============================================================================
+
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+const titleCase = (s) => s.replace(/\b\w/g, (c) => c.toUpperCase());
+
+// --- Shopping trends: real products + prices for trending retail queries ---
+const SHOPPING_QUERIES = ["trending gifts", "viral tiktok products", "best selling t shirt"];
+
+async function serpShopping(query, key) {
+  const url = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(query)}&num=8&api_key=${key}`;
+  const data = await (await get(url)).json();
+  if (data.error) throw new Error(data.error);
+  const items = (data.shopping_results ?? []).slice(0, 6).map((r) => ({
+    name: r.title?.slice(0, 64) ?? "Product",
+    price: r.extracted_price ?? null,
+    source: r.source ?? null,
+    rating: r.rating ?? null,
+  }));
+  const prices = items.map((i) => i.price).filter((p) => Number.isFinite(p));
+  return {
+    id: `shop-${slug(query)}`,
+    title: titleCase(query),
+    query,
+    source: "SerpApi · Google Shopping",
+    live: true,
+    avgPrice: prices.length ? Math.round((prices.reduce((a, b) => a + b, 0) / prices.length) * 100) / 100 : null,
+    priceRange: prices.length ? [Math.min(...prices), Math.max(...prices)] : null,
+    count: items.length,
+    items,
+  };
+}
+
+// --- Event trends: real upcoming events (festivals/concerts/markets) ---
+async function serpEvents(key, location = "United States") {
+  const url = `https://serpapi.com/search.json?engine=google_events&q=${encodeURIComponent("events this month")}&location=${encodeURIComponent(location)}&api_key=${key}`;
+  const data = await (await get(url)).json();
+  if (data.error) throw new Error(data.error);
+  return (data.events_results ?? []).slice(0, 9).map((e, i) => ({
+    id: `evt-${i}`,
+    title: e.title,
+    when: e.date?.when ?? null,
+    startDate: e.date?.start_date ?? null,
+    venue: e.venue?.name ?? null,
+    address: Array.isArray(e.address) ? e.address.join(", ") : (e.address ?? null),
+    link: e.link ?? null,
+    source: "SerpApi · Google Events",
+    live: true,
+  }));
+}
+
+// --- Holiday trends: upcoming US holidays + rising shopping interest ---
+// Dates are deterministic; the "trend" (rising interest) for the nearest two is
+// pulled live from Google Trends so merch can be timed to the run-up.
+const HOLIDAYS = [
+  { name: "Juneteenth",        date: "2026-06-19", q: "juneteenth shirt" },
+  { name: "Father's Day",      date: "2026-06-21", q: "fathers day gift" },
+  { name: "Independence Day",  date: "2026-07-04", q: "4th of july shirt" },
+  { name: "Labor Day",         date: "2026-09-07", q: "labor day sale" },
+  { name: "Halloween",         date: "2026-10-31", q: "halloween costume" },
+  { name: "Veterans Day",      date: "2026-11-11", q: "veterans day shirt" },
+  { name: "Thanksgiving",      date: "2026-11-26", q: "thanksgiving decor" },
+  { name: "Black Friday",      date: "2026-11-27", q: "black friday deals" },
+  { name: "Cyber Monday",      date: "2026-11-30", q: "cyber monday deals" },
+  { name: "Christmas",         date: "2026-12-25", q: "christmas gifts" },
+  { name: "New Year's",        date: "2027-01-01", q: "new years eve outfit" },
+  { name: "Valentine's Day",   date: "2027-02-14", q: "valentines day gift" },
+  { name: "St. Patrick's Day", date: "2027-03-17", q: "st patricks day shirt" },
+  { name: "Mother's Day",      date: "2027-05-09", q: "mothers day gift" },
+];
+
+function upcomingHolidays(limit = 6) {
+  const now = Date.now();
+  return HOLIDAYS
+    .map((h) => ({ ...h, daysUntil: Math.ceil((new Date(h.date + "T00:00:00") - now) / 86400000) }))
+    .filter((h) => h.daysUntil >= -2)
+    .sort((a, b) => a.daysUntil - b.daysUntil)
+    .slice(0, limit);
+}
+
+async function serpHolidayTrends(key) {
+  const upcoming = upcomingHolidays(6);
+  // Pull live interest only for the nearest two (keeps SerpApi credit use low).
+  for (let i = 0; i < Math.min(2, upcoming.length); i++) {
+    try {
+      const interest = await serpInterest(upcoming[i].q, key);
+      const first = interest[0] || 1, last = interest.at(-1) || 0;
+      upcoming[i].interest = interest;
+      upcoming[i].growthPct = interest.length ? Math.round(((last - first) / Math.max(first, 1)) * 100) : null;
+      upcoming[i].live = true;
+    } catch { upcoming[i].live = false; }
+  }
+  return upcoming.map((h, i) => ({
+    id: `hol-${i}`,
+    name: h.name,
+    date: h.date,
+    daysUntil: h.daysUntil,
+    query: h.q,
+    interest: h.interest ?? [],
+    growthPct: h.growthPct ?? null,
+    live: Boolean(h.live),
+    source: h.live ? "SerpApi · Google Trends" : "Calendar",
+  }));
+}
+
+/** Pull all three SerpApi discovery feeds. Persists to state.research.serp. */
+export async function fetchSerpFeeds() {
+  const key = process.env.SERPAPI_KEY;
+  const result = { shopping: [], events: [], holidays: upcomingHolidays(6).map((h, i) => ({ id: `hol-${i}`, name: h.name, date: h.date, daysUntil: h.daysUntil, interest: [], growthPct: null, live: false, source: "Calendar" })), errors: [], fetchedAt: new Date().toISOString() };
+  if (!key) { result.error = "SERPAPI_KEY not set — add it to go live."; state.research.serp = result; persist(); return result; }
+
+  for (const q of SHOPPING_QUERIES) {
+    try { result.shopping.push(await serpShopping(q, key)); }
+    catch (e) { result.errors.push(`shopping "${q}": ${e.message}`); }
+  }
+  try { result.events = await serpEvents(key); }
+  catch (e) { result.errors.push(`events: ${e.message}`); }
+  try { result.holidays = await serpHolidayTrends(key); }
+  catch (e) { result.errors.push(`holidays: ${e.message}`); }
+
+  result.fetchedAt = new Date().toISOString();
+  state.research.serp = result;
+  persist();
+  return result;
+}
+
+export function getSerpFeeds() {
+  if (state.research.serp) return state.research.serp;
+  // Before any pull: holidays are calendar-derivable (no key needed); shopping
+  // and events stay empty until a refresh hits SerpApi.
+  return {
+    shopping: [], events: [],
+    holidays: upcomingHolidays(6).map((h, i) => ({ id: `hol-${i}`, name: h.name, date: h.date, daysUntil: h.daysUntil, interest: [], growthPct: null, live: false, source: "Calendar" })),
+    fetchedAt: null, errors: [],
+  };
+}
+
 export async function fetchTrends() {
   const sources = [];
   let nicheTrends;

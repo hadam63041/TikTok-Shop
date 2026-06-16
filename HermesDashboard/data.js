@@ -293,6 +293,14 @@ const HermesBridge = {
     if (!this.connected) throw new Error('Agent offline — start HermesAgent to pull live trends.');
     return this.api('/trends/refresh', {});
   },
+  // SerpApi discovery feeds: shopping / event / holiday trends.
+  async getSerpFeeds() {
+    return this.connected ? this.api('/research/serp') : { shopping: [], events: [], holidays: [], fetchedAt: null };
+  },
+  async refreshSerpFeeds() {
+    if (!this.connected) throw new Error('Agent offline — start HermesAgent to pull SerpApi trends.');
+    return this.api('/research/serp/refresh', {});
+  },
   async getEtsyProductTypes() { return this.connected ? this.api('/etsy/types') : MOCK.etsy.productTypes; },
   async getEtsyDesigns(t) { return this.connected ? this.api(`/etsy/designs?type=${encodeURIComponent(t)}`) : (MOCK.etsy.designs[t] ?? []); },
   async getFiverrCategories() { return this.connected ? this.api('/fiverr/categories') : MOCK.fiverr.categories; },
@@ -309,6 +317,44 @@ const HermesBridge = {
   async approveDesign(id) { if (this.connected) return this.api(`/designs/${id}/approve`, {}); },
   async regenerateDesign(id) { if (this.connected) return this.api(`/designs/${id}/regenerate`, {}); },
   async linkBusiness(id) { if (this.connected) return this.api(`/businesses/${id}/link`, {}); },
+
+  // --- Printify (real API) ---
+  async getPrintifyStatus() {
+    return this.connected ? this.api('/printify/status') : {
+      configured: false, live: false, maskedToken: null, shops: [],
+      detail: 'Start the agent — token lives in HermesAgent/.env',
+    };
+  },
+  async getPrintifyProducts(shopId, limit = 10) {
+    return this.connected ? this.api(`/printify/products?shop=${encodeURIComponent(shopId)}&limit=${limit}`) : { total: 0, products: [] };
+  },
+  async getPrintifyCatalog() { return this.connected ? this.api('/printify/catalog') : []; },
+  async getPrintifyBlueprint(id) { return this.connected ? this.api(`/printify/blueprint?id=${encodeURIComponent(id)}`) : null; },
+  async setPrintifyPrice(blueprintId, retail) {
+    if (!this.connected) return { blueprintId, retail };
+    return this.api('/printify/price', { blueprintId, retail });
+  },
+  async saveMockup(mockup) { return this.connected ? this.api('/mockups', mockup) : mockup; },
+
+  // --- Design library (Higgsfield imports) + listing ---
+  async getDesigns() { return this.connected ? this.api('/designs') : []; },
+  async addDesign(design) {
+    if (!this.connected) throw new Error('Agent offline — start HermesAgent to save designs.');
+    return this.api('/designs', design);
+  },
+  async deleteDesign(id) { if (this.connected) return this.api('/designs/delete', { id }); },
+  async describeListing(payload) {
+    if (!this.connected) throw new Error('Agent offline.');
+    return this.api('/printify/describe', payload);
+  },
+  async listToEtsy(payload) {
+    if (!this.connected) throw new Error('Agent offline.');
+    return this.api('/printify/list', payload);
+  },
+  async delistProduct(shopId, productId) {
+    if (!this.connected) throw new Error('Agent offline.');
+    return this.api('/printify/delist', { shopId, productId });
+  },
 
   // --- Zendrop ---
   async getZendropStatus() {
@@ -337,5 +383,27 @@ const HermesBridge = {
       };
     }
     return this.api('/agent/chat', { message });
+  },
+
+  /* The agent roster (Hermes + specialist sub-agents). */
+  async getAgents() {
+    if (this.connected) return this.api('/agents');
+    // Offline: show the roster so the menu is populated, marked offline.
+    return [
+      { id: 'hermes', name: 'Hermes', icon: '⚡', color: '#fcee0a', blurb: 'Chief orchestrator', online: false },
+      { id: 'research', name: 'Research', icon: '🔎', color: '#02d7f2', blurb: 'Product & market research', online: false },
+      { id: 'design', name: 'Design', icon: '🎨', color: '#b14aff', blurb: 'Design creation', online: false },
+      { id: 'operations', name: 'Operations', icon: '🚀', color: '#00ff9f', blurb: 'Publishing & fulfillment', online: false },
+      { id: 'revision', name: 'Revision', icon: '📊', color: '#fcee0a', blurb: 'Performance review', online: false },
+      { id: 'accountant', name: 'Accountant', icon: '🧮', color: '#ff7a1a', blurb: 'Profit, costs & expenses', online: false },
+      { id: 'codex', name: 'Codex', icon: '🛰️', color: '#10a37f', blurb: 'External agent · VPS + OpenAI Codex', online: false },
+    ];
+  },
+  /* Contact a specific agent by id. */
+  async chatWithAgent(id, message) {
+    if (!this.connected) {
+      return { reply: 'Agent offline — start HermesAgent (and set ANTHROPIC_API_KEY) to chat.', actions: [], simulated: true };
+    }
+    return this.api(`/agents/${id}/chat`, { message });
   },
 };

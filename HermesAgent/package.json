@@ -8,6 +8,8 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.104.1"
+    "@anthropic-ai/sdk": "^0.104.1",
+    "jimp": "^0.22.12",
+    "openai": "^4.0.0"
   }
 }

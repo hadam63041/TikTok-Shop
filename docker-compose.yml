@@ -1,0 +1,25 @@
+# Hermes Command on the VPS, Codex as the brain.
+# Set the values in a sibling deploy.env (copy deploy.env.example), or fill them
+# into your Hostinger panel's environment fields, then deploy this compose.
+services:
+  hermes-command:
+    build: .
+    image: hermes-command:latest
+    container_name: hermes-command
+    restart: unless-stopped
+    ports:
+      - "8788:8787"            # host:container — open 8788 on the VPS (change if taken)
+    environment:
+      AGENT_BACKEND: openai     # run the agent roster on OpenAI / Codex
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5}
+      STATE_FILE: /data/state.json
+      # Business connectors (optional — leave blank to keep them in simulation):
+      SERPAPI_KEY: ${SERPAPI_KEY:-}
+      PRINTIFY_API_TOKEN: ${PRINTIFY_API_TOKEN:-}
+      ZENDROP_API_KEY: ${ZENDROP_API_KEY:-}
+    volumes:
+      - hermes_data:/data       # persists state.json across rebuilds
+
+volumes:
+  hermes_data:

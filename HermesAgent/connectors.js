@@ -8,7 +8,8 @@
 // service. The agent's tool surface never changes, only the backing.
 
 import { state, persist, logActivity, findAsset } from "./store.js";
-import { fetchTrends, researchSources } from "./research.js";
+import { fetchTrends, researchSources, getSerpFeeds } from "./research.js";
+import { printifyShops, printifyProducts, printifyConfigured, printifyListToEtsy } from "./printify.js";
 
 function requireModelLinked(name) {
   const model = state.aiModels.find((m) => m.name.toLowerCase().includes(name.toLowerCase()));
@@ -69,8 +70,81 @@ export const connectors = [
     envKeys: ["PRINTIFY_API_TOKEN"],
     tools: [
       {
+        name: "printify_list_shops",
+        description: "List the REAL shops connected to the Printify account (live API), with sales channel and product count.",
+        input_schema: { type: "object", properties: {}, required: [] },
+        async handler() {
+          if (!printifyConfigured()) throw new Error("Printify not configured — set PRINTIFY_API_TOKEN.");
+          const shops = await printifyShops();
+          return JSON.stringify(shops, null, 2);
+        },
+      },
+      {
+        name: "printify_list_products",
+        description: "List REAL products in a Printify shop (live API). Pass the shop_id from printify_list_shops.",
+        input_schema: {
+          type: "object",
+          properties: {
+            shop_id: { type: "string", description: "Printify shop id, e.g. 7604471" },
+            limit: { type: "integer", description: "Max products (default 10)" },
+          },
+          required: ["shop_id"],
+        },
+        async handler({ shop_id, limit = 10 }) {
+          if (!printifyConfigured()) throw new Error("Printify not configured — set PRINTIFY_API_TOKEN.");
+          const { total, products } = await printifyProducts(shop_id, limit);
+          return JSON.stringify({ total, products }, null, 2);
+        },
+      },
+      {
+        name: "import_design",
+        description: "Add a generated design (e.g. from Higgsfield AI) to the design library so it shows in Printify → My Designs and can be listed. Pass the image URL.",
+        input_schema: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            image_url: { type: "string", description: "Public URL of the design image" },
+            source: { type: "string", description: "e.g. 'Higgsfield (nano_banana_2)'" },
+          },
+          required: ["image_url"],
+        },
+        async handler({ title, image_url, source }) {
+          const design = {
+            id: "dsn" + Date.now(), title: title || "Untitled design",
+            imageUrl: image_url, thumbUrl: image_url, source: source || "Imported",
+            productTag: "Any", status: "Ready", listings: [], createdAt: new Date().toISOString(),
+          };
+          state.designLibrary.unshift(design);
+          persist();
+          return `Imported "${design.title}" to the design library (id ${design.id}).`;
+        },
+      },
+      {
+        name: "printify_list_to_etsy",
+        description: "List a design to Etsy via Printify: removes the white background (transparent), crops the design to fill the product's print area, creates the product with priced variants, and PUBLISHES it live to the connected Etsy store. If you omit description, one is auto-written from real product facts (material, country of manufacture, design inspiration). This is customer-visible — confirm the product, price, and design with the user before calling. Pass dry_run:true first to preview the plan.",
+        input_schema: {
+          type: "object",
+          properties: {
+            image_url: { type: "string" },
+            title: { type: "string" },
+            description: { type: "string", description: "Optional — leave empty to auto-generate the listing copy" },
+            design_prompt: { type: "string", description: "Optional generation prompt/notes, used to ground the auto-written design-inspiration line" },
+            price: { type: "number", description: "Retail price USD per unit" },
+            blueprint_id: { type: "integer", description: "Printify blueprint, e.g. 5 = Unisex Cotton Crew Tee" },
+            dry_run: { type: "boolean", description: "Preview the plan without creating/publishing" },
+          },
+          required: ["image_url", "title", "price", "blueprint_id"],
+        },
+        async handler({ image_url, title, description, design_prompt, price, blueprint_id, dry_run }) {
+          const result = await printifyListToEtsy(
+            { imageUrl: image_url, title, description, designTitle: title, designPrompt: design_prompt, price, blueprintId: blueprint_id },
+            { dryRun: Boolean(dry_run) });
+          return JSON.stringify(result, null, 2);
+        },
+      },
+      {
         name: "printify_sync_design",
-        description: "Create/sync the white-label product on Printify for a design so it can be fulfilled. Required before publishing to Etsy.",
+        description: "Mark an internal AI design as synced to Printify in the local pipeline. (Real product CREATION needs a blueprint + print provider + variants — left as an explicit, confirmed step, not auto-created here.)",
         input_schema: {
           type: "object",
           properties: { design_id: { type: "string" } },
@@ -79,10 +153,11 @@ export const connectors = [
         async handler({ design_id }) {
           const found = findAsset(design_id);
           if (!found || found.kind !== "design") throw new Error(`No design with id ${design_id}`);
-          // LIVE: POST https://api.printify.com/v1/shops/{shop_id}/products.json
+          // Real creation: POST /v1/shops/{shop_id}/products.json with blueprint_id,
+          // print_provider_id, variants, print_areas — gated behind explicit confirmation.
           found.asset.printify = "Synced";
           persist();
-          return `Printify product synced for "${found.asset.title}".`;
+          return `Marked "${found.asset.title}" as synced in the local pipeline. (Live product creation is a confirmed step — say the word and I'll prepare the blueprint/variant payload.)`;
         },
       },
     ],
@@ -346,6 +421,14 @@ export const coreTools = [
     input_schema: { type: "object", properties: {}, required: [] },
     async handler() {
       return JSON.stringify(researchSources(), null, 2);
+    },
+  },
+  {
+    name: "get_discovery_feeds",
+    description: "Get the latest SerpApi discovery feeds: trending shopping products with real prices, upcoming events drawing crowds, and upcoming holidays with rising search interest. Use to spot demand and time product launches.",
+    input_schema: { type: "object", properties: {}, required: [] },
+    async handler() {
+      return JSON.stringify(getSerpFeeds(), null, 2);
     },
   },
   {

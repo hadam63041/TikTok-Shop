@@ -24,10 +24,15 @@ if (fs.existsSync(ENV_FILE)) {
   }
 }
 
-// Agent is created after env is loaded so it sees ANTHROPIC_API_KEY.
-const { createAgent } = await import("./agent.js");
-const { fetchTrends, researchSources } = await import("./research.js");
-const agent = createAgent();
+// Agents are created after env is loaded so they see ANTHROPIC_API_KEY.
+const { createRoster } = await import("./agents.js");
+const { fetchTrends, researchSources, fetchSerpFeeds, getSerpFeeds } = await import("./research.js");
+const { printifyStatus, printifyShops, printifyProducts, printifyConfigured,
+        printifyCatalog, printifyBlueprintDetail, printifyListToEtsy, printifyEtsyShop,
+        printifyDelist, printifyListingFacts } = await import("./printify.js");
+const { generateListingCopy } = await import("./describe.js");
+const roster = createRoster();
+const agent = roster.get("hermes"); // back-compat: /api/agent/* talks to the orchestrator
 
 // ----- helpers -----
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml" };
@@ -75,6 +80,9 @@ const routes = {
   "GET /api/research/sources": () => researchSources(),
   "GET /api/research/meta": () => ({ fetchedAt: state.research.fetchedAt ?? null, activeSources: state.research.activeSources ?? [] }),
   "POST /api/trends/refresh": () => fetchTrends(),
+  // SerpApi discovery feeds: shopping / event / holiday trends.
+  "GET /api/research/serp": () => getSerpFeeds(),
+  "POST /api/research/serp/refresh": () => fetchSerpFeeds(),
   "GET /api/models": () => state.aiModels,
   "GET /api/etsy/types": () => state.etsy.productTypes,
   "GET /api/etsy/designs": (q) => state.etsy.designs[q.get("type")] ?? [],
@@ -82,6 +90,97 @@ const routes = {
   "GET /api/fiverr/gigs": (q) => state.fiverr.gigs[q.get("category")] ?? [],
   "GET /api/activity": () => state.activity,
   "GET /api/keys": () => connectorStatus(),
+
+  // --- Printify (real API) ---
+  "GET /api/printify/status": () => printifyStatus(),
+  "GET /api/printify/shops": () => printifyShops(),
+  "GET /api/printify/products": (q) => printifyProducts(q.get("shop"), Number(q.get("limit") || 10)),
+  "GET /api/printify/catalog": () => printifyCatalog(state.printifyPricing),
+  "GET /api/printify/blueprint": (q) => printifyBlueprintDetail(q.get("id")),
+  "POST /api/printify/price": (q, body) => {
+    state.printifyPricing[body.blueprintId] = Number(body.retail);
+    persist();
+    return { blueprintId: body.blueprintId, retail: Number(body.retail) };
+  },
+  // --- Design library (Higgsfield imports) ---
+  "GET /api/designs": () => state.designLibrary,
+  "POST /api/designs": (q, body) => {
+    if (!body.imageUrl) throw new Error("imageUrl required");
+    const design = {
+      id: "dsn" + Date.now() + Math.floor(Math.random() * 1000),
+      title: body.title || "Untitled design",
+      imageUrl: body.imageUrl,
+      thumbUrl: body.thumbUrl || body.imageUrl,
+      prompt: body.prompt || null,
+      source: body.source || "Imported",
+      productTag: body.productTag || "Any",
+      status: "Ready",
+      listings: [],
+      createdAt: new Date().toISOString(),
+    };
+    state.designLibrary.unshift(design);
+    persist();
+    return design;
+  },
+  "POST /api/designs/delete": (q, body) => {
+    state.designLibrary = state.designLibrary.filter((d) => d.id !== body.id);
+    persist();
+    return { deleted: body.id };
+  },
+
+  // --- Generate listing copy (material / country / design inspiration) ---
+  // Grounded in real Printify facts; uses Claude when ANTHROPIC_API_KEY is set,
+  // otherwise a template built from the same facts.
+  "POST /api/printify/describe": async (q, body) => {
+    if (!body.blueprintId) throw new Error("blueprintId required");
+    const facts = await printifyListingFacts(body.blueprintId, body.providerId);
+    return generateListingCopy({
+      facts,
+      productTitle: body.title || facts.productType,
+      designTitle: body.designTitle,
+      designPrompt: body.designPrompt,
+    });
+  },
+
+  // --- List a design to Etsy via Printify (real write; dryRun validates) ---
+  "POST /api/printify/list": async (q, body) => {
+    const result = await printifyListToEtsy(body, {
+      dryRun: Boolean(body.dryRun),
+      publish: body.publish !== false,            // default true → live on Etsy
+      matchBackground: body.matchBackground !== false, // default true
+      cropToFit: body.cropToFit !== false,        // default true → fills print area
+    });
+    if (!result.dryRun && body.designId) {
+      const design = state.designLibrary.find((d) => d.id === body.designId);
+      if (design) {
+        design.status = result.published ? "Listed on Etsy" : "On Printify (draft)";
+        design.listings.push({ productId: result.productId, shopId: result.shopId, published: result.published, at: new Date().toISOString() });
+        persist();
+      }
+    }
+    return result;
+  },
+
+  // --- Delist a product from Etsy (unpublish; keeps it in Printify) ---
+  "POST /api/printify/delist": async (q, body) => {
+    const result = await printifyDelist(body.shopId, body.productId);
+    // reflect in any design that owns this listing
+    for (const d of state.designLibrary) {
+      const l = (d.listings ?? []).find((x) => String(x.productId) === String(body.productId));
+      if (l) { l.published = false; l.delistedAt = new Date().toISOString(); d.status = "Delisted"; }
+    }
+    persist();
+    return result;
+  },
+
+  "GET /api/mockups": () => state.mockups,
+  "POST /api/mockups": (q, body) => {
+    const mockup = { id: "mk" + Date.now(), ...body, createdAt: new Date().toISOString() };
+    state.mockups.unshift(mockup);
+    state.mockups = state.mockups.slice(0, 50);
+    persist();
+    return mockup;
+  },
 
   // --- Zendrop ---
   "GET /api/zendrop/status": () => {
@@ -137,6 +236,9 @@ const routes = {
   },
   "POST /api/agent/reset": () => { agent.reset(); return { ok: true }; },
   "GET /api/agent/status": () => agent.status(),
+
+  // Agent roster: Hermes + specialist sub-agents (research/design/operations/revision/accountant).
+  "GET /api/agents": () => roster.list(),
 };
 
 // Parameterized routes
@@ -170,6 +272,15 @@ function dynamicRoute(method, urlPath, body) {
     persist();
     return biz;
   }
+  // Chat with / reset a specific roster agent.
+  match = urlPath.match(/^\/api\/agents\/([\w-]+)\/(chat|reset)$/);
+  if (method === "POST" && match) {
+    const a = roster.get(match[1]);
+    if (!a) throw new Error(`unknown agent ${match[1]}`);
+    if (match[2] === "reset") { a.reset(); return { ok: true }; }
+    if (!body.message) throw new Error("message required");
+    return a.chat(String(body.message)); // promise — dispatcher awaits dynamicRoute
+  }
   return undefined;
 }
 
@@ -185,7 +296,7 @@ const server = http.createServer(async (req, res) => {
     const handler = routes[`${req.method} ${urlPath}`];
     const result = handler !== undefined
       ? await handler(query, body)
-      : dynamicRoute(req.method, urlPath, body);
+      : await dynamicRoute(req.method, urlPath, body);
     if (result === undefined) return json(res, 404, { error: `no route ${req.method} ${urlPath}` });
     return json(res, 200, result);
   } catch (err) {
