@@ -7,12 +7,17 @@
 
 import { createAgent } from "./agent.js";
 import { createOpenAIAgent } from "./agent-openai.js";
+import { createHermesAgent } from "./agent-hermes.js";
 
-// Pick the brain for the built-in agents: Anthropic (default) or OpenAI/Codex.
-// Set AGENT_BACKEND=openai (+ OPENAI_API_KEY) to run the whole roster on Codex —
-// this is how Hermes Command runs when deployed on the VPS.
+// Pick the brain for the built-in agents:
+//   anthropic (default) · openai (OPENAI_API_KEY) · hermes (the VPS Hermes
+//   platform's OAuth brain over its WebSocket — set HERMES_URL/USERNAME/PASSWORD).
 const BACKEND = (process.env.AGENT_BACKEND || "anthropic").toLowerCase();
-const makeAgent = (cfg = {}) => (BACKEND === "openai" ? createOpenAIAgent(cfg) : createAgent(cfg));
+const makeAgent = (cfg = {}) => {
+  if (BACKEND === "hermes") return createHermesAgent({ systemPrompt: cfg.systemPrompt });
+  if (BACKEND === "openai") return createOpenAIAgent(cfg);
+  return createAgent(cfg);
+};
 
 const PORTFOLIO =
   "Portfolio: Etsy print-on-demand shops (candles, magnets, shirts, hats) fulfilled via Printify; " +
@@ -75,51 +80,11 @@ export const AGENT_SPECS = [
 
 const HERMES_META = { id: "hermes", name: "Hermes", icon: "⚡", color: "#fcee0a", blurb: "Chief orchestrator" };
 
-// External third-party agent: hosted in Docker on a VPS, already wired to OpenAI
-// Codex on its side. We link to it over HTTP — Codex is reached *through* it, so
-// no OpenAI key lives here. Config is read from the environment at call time, so
-// setting VPS_AGENT_URL / VPS_AGENT_KEY (in .env or via POST /api/keys) takes
-// effect without code changes.
-const EXTERNAL_META = { id: "codex", name: "Codex", icon: "🛰️", color: "#10a37f", blurb: "External agent · VPS + OpenAI Codex" };
-
-function createHttpAgent() {
-  let history = [];
-  const cfg = () => ({ url: process.env.VPS_AGENT_URL, key: process.env.VPS_AGENT_KEY });
-  return {
-    async chat(message) {
-      const { url, key } = cfg();
-      if (!url) {
-        return {
-          reply: "External Codex agent isn't linked yet. Set VPS_AGENT_URL (and VPS_AGENT_KEY if it needs one) in HermesAgent/.env, then restart.",
-          actions: [], simulated: true,
-        };
-      }
-      history.push({ role: "user", content: String(message) });
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(key ? { Authorization: `Bearer ${key}` } : {}) },
-          body: JSON.stringify({ message, history }),
-          signal: AbortSignal.timeout(90000),
-        });
-        if (!res.ok) {
-          return { reply: `External agent error ${res.status}: ${(await res.text()).slice(0, 200)}`, actions: [], simulated: false };
-        }
-        const data = await res.json().catch(() => ({}));
-        // Normalize common response shapes (incl. OpenAI chat-completions) into {reply}.
-        const reply = data.reply ?? data.output ?? data.message
-          ?? data.choices?.[0]?.message?.content ?? JSON.stringify(data).slice(0, 600);
-        history.push({ role: "assistant", content: reply });
-        return { reply, actions: data.actions ?? [] };
-      } catch (err) {
-        return { reply: `Couldn't reach the external agent at ${url}: ${err.message}`, actions: [], simulated: false };
-      }
-    },
-    reset() { history = []; },
-    get online() { return Boolean(process.env.VPS_AGENT_URL); },
-    status() { const { url } = cfg(); return { backend: "vps-codex", url: url || null, linked: Boolean(url) }; },
-  };
-}
+// External third-party agent: the Nous "Hermes" platform on your VPS, linked to
+// OpenAI via OAuth. We reach it over its WebSocket (see agent-hermes.js) — the
+// OAuth brain stays on the VPS, no key here. Always present as a menu entry so
+// you can chat with it directly; also a delegation target.
+const EXTERNAL_META = { id: "codex", name: "Codex", icon: "🛰️", color: "#10a37f", blurb: "VPS Hermes · OpenAI OAuth brain" };
 
 export function createRoster() {
   const specialists = {};
@@ -133,8 +98,9 @@ export function createRoster() {
     });
   }
 
-  // The external VPS/Codex agent — a delegation target like the specialists.
-  const external = createHttpAgent();
+  // The external VPS Hermes agent (OAuth brain over WebSocket) — also a
+  // delegation target. Independent of AGENT_BACKEND.
+  const external = createHermesAgent();
   const delegatable = { ...specialists, [EXTERNAL_META.id]: external };
 
   // Hermes can hand a task to any specialist (or the external Codex agent).

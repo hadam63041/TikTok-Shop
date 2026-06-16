@@ -18,9 +18,11 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}     # optional — blank if using the Hermes OAuth brain
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5}
       STATE_FILE: /data/state.json
-      # When we wire the Hermes-platform bridge (OAuth OpenAI), these get used:
+      # Hermes bridge (OAuth brain): set AGENT_BACKEND=hermes + these three to make
+      # the dashboard's chat think via your VPS Hermes platform (no OpenAI key here).
       HERMES_URL: ${HERMES_URL:-}
-      HERMES_PAIRING_TOKEN: ${HERMES_PAIRING_TOKEN:-}
+      HERMES_USERNAME: ${HERMES_USERNAME:-}
+      HERMES_PASSWORD: ${HERMES_PASSWORD:-}
       # MCP: secret your Hermes agent presents to call this dashboard's tools.
       MCP_TOKEN: ${MCP_TOKEN:-}
       # Business connectors (optional — leave blank to keep them in simulation):

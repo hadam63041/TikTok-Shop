@@ -90,6 +90,29 @@ Hermes Command exposes those tools over MCP at `…/mcp`.
 > budgets. The `MCP_TOKEN` is what gates access, so use a strong one. The tool
 > descriptions tell the agent to confirm customer-visible/spending actions first.
 
+## Step 7 — make the dashboard's own chat use your OAuth brain (bridge)
+
+This fixes the *"OpenAI/Codex brain has no key"* message in the dashboard console.
+It routes the dashboard's chat through your Hermes platform's WebSocket, so it
+thinks with the **OAuth brain** — no OpenAI key needed.
+
+In `deploy.env` set:
+```
+AGENT_BACKEND=hermes
+HERMES_URL=https://hermes-agent-b6y5.srv1753238.hstgr.cloud
+HERMES_USERNAME=<a Hermes login>
+HERMES_PASSWORD=<that login's password>
+```
+Then redeploy (`docker compose --env-file deploy.env up -d --build`). Now the
+dashboard's console — and the 🛰️ **Codex** agent in the left menu — chat with your
+VPS Hermes OAuth brain. (The platform only offers username/password auth, so the
+bridge logs in with a Hermes account; use a rotated credential, stored only in
+`deploy.env` on the VPS.)
+
+> If a reply comes back like *"HTTP 429: usage limit reached"*, that's your
+> **OpenAI account's usage limit**, not the bridge — it clears when your OpenAI
+> quota resets.
+
 ---
 
 ## Optional — a real subdomain with HTTPS
