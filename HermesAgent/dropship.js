@@ -164,7 +164,9 @@ export function supplierKey(id) {
   return process.env[supplier(id).envKeys[0]] || null;
 }
 
-/** Honest live check — reports exactly what the supplier endpoint returns. */
+/** Honest live check — reports exactly what the supplier endpoint returns.
+    JSON alone isn't success: gateways like AliExpress return a JSON *error*
+    (e.g. MissingParameter) for an unsigned call, so we inspect the body. */
 export async function supplierVerify(id) {
   const s = supplier(id);
   const key = process.env[s.envKeys[0]];
@@ -175,13 +177,17 @@ export async function supplierVerify(id) {
       signal: AbortSignal.timeout(10000),
     });
     const ct = res.headers.get("content-type") || "";
-    const isJson = ct.includes("application/json");
-    return {
-      ok: isJson, httpStatus: res.status, contentType: ct,
-      detail: isJson
-        ? "Endpoint returned JSON — live API reachable."
-        : `Endpoint returned ${ct || "non-JSON"}, not JSON. ${s.noFeedNote}.`,
-    };
+    if (!ct.includes("application/json")) {
+      return { ok: false, httpStatus: res.status, contentType: ct, detail: `Endpoint returned ${ct || "non-JSON"}, not JSON. ${s.noFeedNote}.` };
+    }
+    let body = null;
+    try { body = await res.json(); } catch { /* not parseable */ }
+    const err = body && (body.error_response || body.error || body.errors);
+    if (err) {
+      const msg = (err.msg || err.message || (typeof err === "string" ? err : JSON.stringify(err))).slice(0, 160);
+      return { ok: false, httpStatus: res.status, contentType: ct, detail: `Reachable, but the API rejected the call: ${msg}. ${s.noFeedNote}.` };
+    }
+    return { ok: true, httpStatus: res.status, contentType: ct, detail: "Endpoint returned JSON product data — live API reachable." };
   } catch (err) {
     return { ok: false, detail: `Request failed: ${err.message}` };
   }
