@@ -361,9 +361,28 @@ const HermesBridge = {
     return this.connected ? this.api('/zendrop/status') : {
       provider: 'Zendrop', configured: false, maskedKey: null,
       storedIn: 'Start the agent — key lives in HermesAgent/.env', products: 0, imported: 0, openOrders: 0,
+      channels: [
+        { id: 'tiktok', name: 'TikTok Shop', icon: '🛍️' },
+        { id: 'facebook', name: 'Facebook Marketplace', icon: '📘' },
+        { id: 'etsy', name: 'Etsy', icon: '🛒' },
+        { id: 'amazon', name: 'Amazon', icon: '📦' },
+        { id: 'ebay', name: 'eBay', icon: '🏷️' },
+      ],
     };
   },
-  async getZendropProducts() { return this.connected ? this.api('/zendrop/products') : []; },
+  // Live-aware catalog payload: { live, source, products }.
+  async getZendropProducts() {
+    return this.connected ? this.api('/zendrop/products') : { live: false, source: 'agent offline', products: [] };
+  },
+  // List / remove a product across marketplace channels (channel id or 'all').
+  async listZendropChannel(productId, channel) {
+    if (!this.connected) throw new Error('Agent offline.');
+    return this.api('/zendrop/list', { productId, channel });
+  },
+  async unlistZendropChannel(productId, channel) {
+    if (!this.connected) throw new Error('Agent offline.');
+    return this.api('/zendrop/unlist', { productId, channel });
+  },
   async getZendropOrders() { return this.connected ? this.api('/zendrop/orders') : []; },
   async getZendropKey() {
     if (!this.connected) throw new Error('Agent offline — key is in HermesAgent/.env');

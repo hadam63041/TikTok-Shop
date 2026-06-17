@@ -339,6 +339,27 @@ code { font-family: var(--font-mono); color: var(--yellow); font-size: 12px; }
 .verify-result.ok { color: var(--green); }
 .verify-result.warn { color: var(--yellow); }
 
+/* ----- Zendrop: shipping options + marketplace listing chips ----- */
+.zd-ship { margin: 8px 0 4px; display: flex; flex-direction: column; gap: 3px; }
+.zd-ship-opt { font-size: 11.5px; color: var(--muted); letter-spacing: 0.2px; }
+.zd-ship-opt b { color: var(--text); font-family: var(--font-mono); }
+.zd-sub {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--cyan); margin: 10px 0 6px;
+}
+.zd-channels { display: flex; flex-wrap: wrap; gap: 6px; }
+.zd-channel-chip {
+  font-family: var(--font-display); font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+  padding: 5px 9px; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+}
+.zd-channel-chip:hover { border-color: var(--cyan); background: rgba(2, 215, 242, 0.08); }
+.zd-channel-chip.on {
+  background: rgba(0, 255, 159, 0.12); border-color: rgba(0, 255, 159, 0.5); color: var(--green);
+  text-shadow: 0 0 6px rgba(0, 255, 159, 0.35);
+}
+
 /* ----- Printify panel ----- */
 .printify-shops { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .shop-chip {

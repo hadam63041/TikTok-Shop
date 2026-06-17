@@ -33,6 +33,7 @@ const { printifyStatus, printifyShops, printifyProducts, printifyConfigured,
         printifyDelist, printifyListingFacts } = await import("./printify.js");
 const { generateListingCopy } = await import("./describe.js");
 const { handleMcpRpc } = await import("./mcp.js");
+const { CHANNELS, zendropProductsPayload, listProductToChannels, unlistProductFromChannel, channelName } = await import("./zendrop.js");
 const roster = createRoster();
 const agent = roster.get("hermes"); // back-compat: /api/agent/* talks to the orchestrator
 
@@ -195,9 +196,21 @@ const routes = {
       products: state.zendrop.products.length,
       imported: state.zendrop.products.filter((p) => p.imported).length,
       openOrders: state.zendrop.orders.filter((o) => o.status.startsWith("Processing") || o.status.startsWith("Draft")).length,
+      channels: CHANNELS, // sales channels products can be listed to
     };
   },
-  "GET /api/zendrop/products": () => state.zendrop.products.map((p) => ({ ...p, marginPct: Math.round((1 - p.cost / p.retail) * 100) })),
+  // Live-aware catalog: { live, source, products } (products carry cost,
+  // shipping options, margin and the channels they're listed to).
+  "GET /api/zendrop/products": () => zendropProductsPayload(),
+  // List / unlist a product across marketplace channels (drafts).
+  "POST /api/zendrop/list": (q, body) => {
+    const { product, added } = listProductToChannels(body.productId, body.channel ?? body.channels);
+    return { product, added, channels: added.map(channelName) };
+  },
+  "POST /api/zendrop/unlist": (q, body) => {
+    const { product, removed } = unlistProductFromChannel(body.productId, body.channel);
+    return { product, removed };
+  },
   "GET /api/zendrop/orders": () => state.zendrop.orders.map((o) => ({ ...o, profit: Number((o.revenue - o.cost).toFixed(2)) })),
   // Localhost convenience: reveal the full key on explicit request. The key
   // otherwise lives only in .env / process.env and is masked everywhere else.

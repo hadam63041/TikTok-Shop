@@ -137,13 +137,28 @@ function seed() {
     zendrop: {
       // Dropshipping supplier integration. Sourced products carry the Zendrop
       // cost; you set retail and Zendrop fulfills + ships on each order.
+      // Each product carries supplier cost, retail, the shipping options Zendrop
+      // offers (method / transit days / cost), and `channels` = the marketplaces
+      // it's been listed to (ids from zendrop.js CHANNELS).
       products: [
-        { id: "zd1", name: "LED Sunset Projector Lamp", emoji: "🌅", category: "Home", cost: 8.40, retail: 29.99, shipDays: "6–9", orders30d: 142, imported: true, store: "PetGear Plus" },
-        { id: "zd2", name: "Magnetic Phone Mount (3-pack)", emoji: "🧲", category: "Accessories", cost: 3.10, retail: 16.99, shipDays: "5–8", orders30d: 98, imported: true, store: "PetGear Plus" },
-        { id: "zd3", name: "Collapsible Dog Travel Bowl", emoji: "🐕", category: "Pet", cost: 2.75, retail: 14.99, shipDays: "7–10", orders30d: 211, imported: true, store: "PetGear Plus" },
-        { id: "zd4", name: "Posture Corrector Brace", emoji: "🦴", category: "Wellness", cost: 5.20, retail: 24.99, shipDays: "6–9", orders30d: 67, imported: false, store: null },
-        { id: "zd5", name: "Mini Portable Blender", emoji: "🥤", category: "Kitchen", cost: 9.80, retail: 34.99, shipDays: "8–12", orders30d: 53, imported: false, store: null },
-        { id: "zd6", name: "Self-Stirring Mug", emoji: "☕", category: "Kitchen", cost: 4.60, retail: 19.99, shipDays: "6–9", orders30d: 38, imported: false, store: null },
+        { id: "zd1", name: "LED Sunset Projector Lamp", emoji: "🌅", category: "Home", cost: 8.40, retail: 29.99, shipDays: "6–9", orders30d: 142, imported: true, store: "PetGear Plus",
+          channels: ["tiktok", "etsy"],
+          shipping: [ { method: "Standard", days: "8–14", cost: 0 }, { method: "Express", days: "5–8", cost: 4.99 } ] },
+        { id: "zd2", name: "Magnetic Phone Mount (3-pack)", emoji: "🧲", category: "Accessories", cost: 3.10, retail: 16.99, shipDays: "5–8", orders30d: 98, imported: true, store: "PetGear Plus",
+          channels: [],
+          shipping: [ { method: "Standard", days: "7–12", cost: 0 }, { method: "Express", days: "4–7", cost: 3.49 } ] },
+        { id: "zd3", name: "Collapsible Dog Travel Bowl", emoji: "🐕", category: "Pet", cost: 2.75, retail: 14.99, shipDays: "7–10", orders30d: 211, imported: true, store: "PetGear Plus",
+          channels: ["tiktok"],
+          shipping: [ { method: "Standard", days: "7–10", cost: 0 }, { method: "Express", days: "4–6", cost: 3.99 } ] },
+        { id: "zd4", name: "Posture Corrector Brace", emoji: "🦴", category: "Wellness", cost: 5.20, retail: 24.99, shipDays: "6–9", orders30d: 67, imported: false, store: null,
+          channels: [],
+          shipping: [ { method: "Standard", days: "8–14", cost: 0 }, { method: "Express", days: "5–9", cost: 4.49 } ] },
+        { id: "zd5", name: "Mini Portable Blender", emoji: "🥤", category: "Kitchen", cost: 9.80, retail: 34.99, shipDays: "8–12", orders30d: 53, imported: false, store: null,
+          channels: [],
+          shipping: [ { method: "Standard", days: "9–15", cost: 1.99 }, { method: "Express", days: "6–9", cost: 5.99 } ] },
+        { id: "zd6", name: "Self-Stirring Mug", emoji: "☕", category: "Kitchen", cost: 4.60, retail: 19.99, shipDays: "6–9", orders30d: 38, imported: false, store: null,
+          channels: [],
+          shipping: [ { method: "Standard", days: "6–9", cost: 0 }, { method: "Express", days: "4–6", cost: 3.99 } ] },
       ],
       orders: [
         { id: "ZD-10293", product: "Collapsible Dog Travel Bowl", qty: 2, customer: "A. Rivera", status: "Shipped", tracking: "LP847362910CN", revenue: 29.98, cost: 5.50, placedAt: "2026-06-09" },
@@ -183,6 +198,19 @@ const defaults = seed();
 let backfilled = false;
 for (const key of Object.keys(defaults)) {
   if (loaded[key] === undefined) { loaded[key] = defaults[key]; backfilled = true; }
+}
+
+// Nested backfill: older state.json Zendrop products predate per-product
+// shipping options and marketplace channel listings — add them in place.
+for (const p of loaded.zendrop?.products ?? []) {
+  if (!Array.isArray(p.channels)) { p.channels = []; backfilled = true; }
+  if (!Array.isArray(p.shipping)) {
+    p.shipping = [
+      { method: "Standard", days: p.shipDays || "8–14", cost: 0 },
+      { method: "Express", days: "5–8", cost: 4.99 },
+    ];
+    backfilled = true;
+  }
 }
 
 export const state = loaded;

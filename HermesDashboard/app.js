@@ -1437,16 +1437,16 @@ function gigCard(gig) {
 /* ---------------- ZenDrop view ---------------- */
 
 function renderZendrop() {
+  const channels = cache.zendropStatus?.channels ?? [];
   const tabs = [
     { id: 'connection', label: '🔌 Connection' },
     { id: 'products', label: '📦 Products' },
     { id: 'orders', label: '🚚 Orders' },
+    ...channels.map((c) => ({ id: 'ch:' + c.id, label: `${c.icon} ${c.name}` })),
   ];
-  const body = {
-    connection: zendropConnection,
-    products: zendropProducts,
-    orders: zendropOrders,
-  }[state.zendropTab]();
+  const body = state.zendropTab.startsWith('ch:')
+    ? zendropChannelView(state.zendropTab.slice(3))
+    : ({ connection: zendropConnection, products: zendropProducts, orders: zendropOrders }[state.zendropTab] ?? zendropConnection)();
 
   return `
     <div class="secondary-tabs">
@@ -1499,28 +1499,134 @@ function zendropConnection() {
 }
 
 function zendropProducts() {
-  const products = cache.zendropProducts ?? [];
+  const payload = cache.zendropProducts ?? { products: [], live: false, source: '' };
+  const products = payload.products ?? [];
+  const channels = cache.zendropStatus?.channels ?? [];
   return `
-    <div class="panel-title">Zendrop catalog — source & import products</div>
-    <div class="design-grid">
-      ${products.map((p) => `
-        <div class="card design-card">
-          <div class="design-art" style="background:linear-gradient(135deg,#13242c,#02d7f2)">${p.emoji}</div>
-          <div class="design-body">
-            <h4>${p.name}</h4>
-            <div class="muted" style="font-size:12px;margin-bottom:8px">${p.category} · ships ${p.shipDays} days</div>
-            <div class="design-meta">
-              <span class="badge ${p.imported ? 'listed' : 'review'}">${p.imported ? 'Imported → ' + p.store : 'Not imported'}</span>
-              <span class="badge printify">${p.marginPct}% margin</span>
-            </div>
-            <div class="design-stats">
-              <span>Cost <b>${money(p.cost, 2)}</b></span>
-              <span>Retail <b>${money(p.retail, 2)}</b></span>
-              <span>30d <b>${p.orders30d}</b></span>
-            </div>
-          </div>
-        </div>`).join('')}
+    <div class="card section-gap source-strip">
+      <span class="panel-title" style="margin:0">Zendrop catalog</span>
+      <span class="provenance ${payload.live ? 'live' : 'sample'}">${payload.live ? '● LIVE' : '○ SAMPLE'}</span>
+      <span class="muted">${escapeHtml(payload.source || '')}</span>
+      <span class="muted" style="margin-left:auto">${products.length} products · list to ${channels.length} marketplaces</span>
+    </div>
+    ${products.length ? `
+      <div class="design-grid">
+        ${products.map((p) => zendropProductCard(p, channels)).join('')}
+      </div>` : `<div class="card"><span class="muted">No products. ${HermesBridge.connected ? '' : 'Start the agent to load the catalog.'}</span></div>`}`;
+}
+
+function zendropProductCard(p, channels) {
+  const margin = p.marginPct ?? (p.retail ? Math.round((1 - p.cost / p.retail) * 100) : 0);
+  const listed = new Set(p.channels ?? []);
+  const ship = (p.shipping ?? []).map((s) =>
+    `<div class="zd-ship-opt">🚚 <b>${escapeHtml(s.method)}</b> · ${escapeHtml(String(s.days))} days · ${s.cost ? money(s.cost, 2) : 'Free'}</div>`).join('');
+  return `
+    <div class="card design-card">
+      <div class="design-art" style="background:linear-gradient(135deg,#13242c,#02d7f2)">${p.emoji ?? '📦'}</div>
+      <div class="design-body">
+        <h4>${escapeHtml(p.name)}</h4>
+        <div class="muted" style="font-size:12px;margin-bottom:8px">${escapeHtml(p.category || '')}${p.imported ? ` · in ${escapeHtml(p.store || 'store')}` : ''}</div>
+        <div class="design-stats">
+          <span>Cost <b>${money(p.cost, 2)}</b></span>
+          <span>Retail <b>${money(p.retail, 2)}</b></span>
+          <span>Margin <b>${margin}%</b></span>
+        </div>
+        <div class="zd-ship">${ship || '<span class="muted" style="font-size:11px">No shipping options listed</span>'}</div>
+        <div class="zd-sub">List to marketplaces</div>
+        <div class="zd-channels">
+          ${channels.map((c) => `
+            <button class="zd-channel-chip ${listed.has(c.id) ? 'on' : ''}"
+                    onclick="toggleChannelListing('${p.id}','${c.id}')"
+                    title="${listed.has(c.id) ? 'Listed — click to remove' : 'List to ' + escapeHtml(c.name)}">
+              ${c.icon} ${escapeHtml(c.name)} ${listed.has(c.id) ? '✓' : '+'}
+            </button>`).join('')}
+        </div>
+        <button class="link-toggle linked" style="width:100%;margin-top:10px" onclick="listToAllChannels('${p.id}')">📣 List to all sites</button>
+        <div class="muted" style="font-size:10.5px;margin-top:6px;line-height:1.4">
+          Listing queues a draft — connect each marketplace's API to publish live.
+        </div>
+      </div>
     </div>`;
+}
+
+/* Per-channel tab: connection status + the products listed to that channel. */
+function zendropChannelView(channelId) {
+  const channels = cache.zendropStatus?.channels ?? [];
+  const ch = channels.find((c) => c.id === channelId) ?? { id: channelId, name: channelId, icon: '🛒' };
+  const products = (cache.zendropProducts?.products ?? []).filter((p) => (p.channels ?? []).includes(channelId));
+  const catalogValue = products.reduce((s, p) => s + (p.retail || 0), 0);
+  return `
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="label">Channel</div>
+        <div class="value" style="font-size:20px">${ch.icon} ${escapeHtml(ch.name)}</div>
+        <div class="hint">sales channel</div></div>
+      <div class="card kpi"><div class="label">Connection</div>
+        <div class="value" style="font-size:20px">🔴 Not connected</div>
+        <div class="hint">${escapeHtml(ch.name)} listing API pending</div></div>
+      <div class="card kpi"><div class="label">Listed products</div>
+        <div class="value">${products.length}</div>
+        <div class="hint">${money(catalogValue, 2)} catalog value</div></div>
+    </div>
+
+    <div class="card section-gap">
+      <div class="panel-title">Connect ${escapeHtml(ch.name)}</div>
+      <div class="muted" style="font-size:12.5px;line-height:1.55">
+        Listings created here are <b>drafts</b>. To publish live to ${escapeHtml(ch.name)}, connect its API
+        (key / OAuth) — then the agent can push these products with one click. Marketplace credentials live
+        server-side in <code>HermesAgent/.env</code>, never in the dashboard.
+      </div>
+    </div>
+
+    <div class="panel-title">Products listed to ${escapeHtml(ch.name)}</div>
+    ${products.length ? `
+      <div class="design-grid">
+        ${products.map((p) => zendropChannelProductCard(p, ch)).join('')}
+      </div>` : `
+      <div class="card"><span class="muted">No products listed to ${escapeHtml(ch.name)} yet. Go to 📦 Products and click "${escapeHtml(ch.name)}" or "List to all sites".</span></div>`}`;
+}
+
+function zendropChannelProductCard(p, ch) {
+  const margin = p.marginPct ?? (p.retail ? Math.round((1 - p.cost / p.retail) * 100) : 0);
+  const cheapest = (p.shipping ?? []).reduce((m, s) => (m == null || s.cost < m.cost ? s : m), null);
+  return `
+    <div class="card design-card">
+      <div class="design-art" style="background:linear-gradient(135deg,#13242c,#02d7f2)">${p.emoji ?? '📦'}</div>
+      <div class="design-body">
+        <h4>${escapeHtml(p.name)}</h4>
+        <div class="design-meta">
+          <span class="badge review">Draft listing</span>
+          <span class="badge printify">${margin}% margin</span>
+        </div>
+        <div class="design-stats">
+          <span>Cost <b>${money(p.cost, 2)}</b></span>
+          <span>Retail <b>${money(p.retail, 2)}</b></span>
+        </div>
+        ${cheapest ? `<div class="zd-ship-opt" style="margin:2px 0 8px">🚚 from <b>${cheapest.cost ? money(cheapest.cost, 2) : 'Free'}</b> · ${escapeHtml(String(cheapest.days))} days</div>` : ''}
+        <div class="design-actions">
+          <button class="danger" onclick="toggleChannelListing('${p.id}','${ch.id}')">⊘ Remove from ${escapeHtml(ch.name)}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* List / unlist a product on one channel (toggles), or list to all. */
+async function toggleChannelListing(productId, channelId) {
+  const p = (cache.zendropProducts?.products ?? []).find((x) => x.id === productId);
+  const isListed = (p?.channels ?? []).includes(channelId);
+  try {
+    if (isListed) await HermesBridge.unlistZendropChannel(productId, channelId);
+    else await HermesBridge.listZendropChannel(productId, channelId);
+    cache.zendropProducts = await HermesBridge.getZendropProducts();
+    render();
+  } catch (err) { alert('Listing failed: ' + err.message); }
+}
+
+async function listToAllChannels(productId) {
+  try {
+    await HermesBridge.listZendropChannel(productId, 'all');
+    cache.zendropProducts = await HermesBridge.getZendropProducts();
+    render();
+  } catch (err) { alert('Listing failed: ' + err.message); }
 }
 
 function zendropOrders() {

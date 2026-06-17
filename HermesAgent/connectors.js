@@ -10,6 +10,7 @@
 import { state, persist, logActivity, findAsset } from "./store.js";
 import { fetchTrends, researchSources, getSerpFeeds } from "./research.js";
 import { printifyShops, printifyProducts, printifyConfigured, printifyListToEtsy } from "./printify.js";
+import { CHANNELS, listProductToChannels, channelName } from "./zendrop.js";
 
 function requireModelLinked(name) {
   const model = state.aiModels.find((m) => m.name.toLowerCase().includes(name.toLowerCase()));
@@ -348,6 +349,30 @@ export const connectors = [
           state.zendrop.orders.unshift(order);
           persist();
           return `Drafted order ${order.id}: ${qty}× ${p.name}. Cost $${order.cost}, revenue $${order.revenue}. NOT submitted — confirm and place it yourself in Zendrop.`;
+        },
+      },
+      {
+        name: "list_product_to_channels",
+        description:
+          "List a Zendrop product to one or more sales channels (TikTok Shop, Facebook Marketplace, Etsy, Amazon, eBay) — pass channel ids or 'all'. This QUEUES a draft listing per channel; it does not publish live or spend money (each marketplace's listing API must be connected to actually publish). Safe to call.",
+        input_schema: {
+          type: "object",
+          properties: {
+            product_id: { type: "string", description: "Zendrop product id, e.g. zd4" },
+            channels: {
+              type: "array",
+              items: { type: "string", enum: [...CHANNELS.map((c) => c.id), "all"] },
+              description: "Channel ids (tiktok, facebook, etsy, amazon, ebay) or ['all']",
+            },
+          },
+          required: ["product_id", "channels"],
+        },
+        async handler({ product_id, channels }) {
+          const { product, added } = listProductToChannels(product_id, channels);
+          // LIVE: for each connected channel, POST the listing to its marketplace API.
+          return added.length
+            ? `Queued draft listings for "${product.name}" on: ${added.map(channelName).join(", ")}. Connect each marketplace's API to publish live.`
+            : `"${product.name}" was already listed on those channels.`;
         },
       },
     ],
