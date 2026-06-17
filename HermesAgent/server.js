@@ -34,7 +34,7 @@ const { printifyStatus, printifyShops, printifyProducts, printifyConfigured,
 const { generateListingCopy } = await import("./describe.js");
 const { handleMcpRpc } = await import("./mcp.js");
 const { supplierStatus, supplierProductsPayload, supplierOrders, supplierKey, supplierVerify,
-        listProductToChannels, unlistProductFromChannel, channelName } = await import("./dropship.js");
+        listProductToChannels, unlistProductFromChannel, channelName, channelKey } = await import("./dropship.js");
 const roster = createRoster();
 const agent = roster.get("hermes"); // back-compat: /api/agent/* talks to the orchestrator
 
@@ -220,6 +220,10 @@ function dynamicRoute(method, urlPath, body) {
     if (match[2] === "key") return { key: supplierKey(id) };
     return supplierVerify(id); // async
   }
+  // Reveal a marketplace channel's API key (e.g. TikTok Shop), localhost convenience.
+  match = urlPath.match(/^\/api\/channels\/([\w-]+)\/key$/);
+  if (method === "GET" && match) return { key: channelKey(match[1]) };
+
   match = urlPath.match(/^\/api\/dropship\/([\w-]+)\/(list|unlist)$/);
   if (method === "POST" && match) {
     const id = match[1];

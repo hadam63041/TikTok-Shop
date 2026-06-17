@@ -386,6 +386,11 @@ const HermesBridge = {
     if (!this.connected) return { ok: false, detail: 'Agent offline.' };
     return this.api(`/dropship/${id}/verify`);
   },
+  // Reveal a marketplace channel's API key (e.g. TikTok Shop).
+  async getChannelKey(channelId) {
+    if (!this.connected) throw new Error('Agent offline — key is in HermesAgent/.env');
+    return (await this.api(`/channels/${channelId}/key`)).key;
+  },
   // List / remove a product across marketplace channels (channel id or 'all').
   async listChannel(id, productId, channel) {
     if (!this.connected) throw new Error('Agent offline.');

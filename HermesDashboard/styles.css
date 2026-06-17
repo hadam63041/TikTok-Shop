@@ -359,6 +359,8 @@ code { font-family: var(--font-mono); color: var(--yellow); font-size: 12px; }
   background: rgba(0, 255, 159, 0.12); border-color: rgba(0, 255, 159, 0.5); color: var(--green);
   text-shadow: 0 0 6px rgba(0, 255, 159, 0.35);
 }
+/* channel whose API is linked (e.g. TikTok Shop) — green left accent */
+.zd-channel-chip.linked { border-left: 3px solid var(--green); }
 
 /* ----- Printify panel ----- */
 .printify-shops { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

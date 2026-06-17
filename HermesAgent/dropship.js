@@ -18,9 +18,13 @@
 import { state, persist } from "./store.js";
 import crypto from "node:crypto";
 
-// Sales channels a product can be listed to (shared across suppliers).
+// Sales channels a product can be listed to (shared across suppliers). A channel
+// with `envKeys` can be CONNECTED by supplying those credentials (server-side);
+// `authNote` explains what live publishing still needs beyond the app creds.
 export const CHANNELS = [
-  { id: "tiktok",   name: "TikTok Shop",          icon: "🛍️" },
+  { id: "tiktok", name: "TikTok Shop", icon: "🛍️",
+    envKeys: ["TIKTOK_SHOP_APP_KEY", "TIKTOK_SHOP_APP_SECRET"],
+    authNote: "App key + secret linked. To publish live, authorize the app on your TikTok Shop (OAuth) to mint an access token." },
   { id: "facebook", name: "Facebook Marketplace", icon: "📘" },
   { id: "etsy",     name: "Etsy",                 icon: "🛒" },
   { id: "amazon",   name: "Amazon",               icon: "📦" },
@@ -28,6 +32,29 @@ export const CHANNELS = [
 ];
 const CHANNEL_BY_ID = Object.fromEntries(CHANNELS.map((c) => [c.id, c]));
 const CHANNEL_BY_NAME = Object.fromEntries(CHANNELS.map((c) => [c.name.toLowerCase(), c]));
+
+// Channel connection state, driven by whether its API credentials are present.
+export function channelConfigured(c) {
+  return Array.isArray(c.envKeys) && c.envKeys.length > 0 && c.envKeys.every((k) => Boolean(process.env[k]));
+}
+export function channelStatus(channelId) {
+  const c = CHANNEL_BY_ID[channelId];
+  if (!c) return null;
+  const primary = c.envKeys?.[0] ? (process.env[c.envKeys[0]] || "") : "";
+  return {
+    id: c.id, name: c.name, icon: c.icon, envKeys: c.envKeys ?? [],
+    configured: channelConfigured(c),
+    maskedKey: primary ? `${primary.slice(0, 4)}${"•".repeat(8)}${primary.slice(-4)}` : null,
+    authNote: c.authNote ?? null,
+  };
+}
+export function channelsWithStatus() {
+  return CHANNELS.map((c) => channelStatus(c.id));
+}
+export function channelKey(channelId) {
+  const c = CHANNEL_BY_ID[channelId];
+  return c?.envKeys?.[0] ? (process.env[c.envKeys[0]] || null) : null;
+}
 
 export const SUPPLIERS = [
   {
@@ -225,7 +252,7 @@ export function supplierStatus(id) {
     products: productsOf(id).length,
     imported: productsOf(id).filter((p) => p.imported).length,
     openOrders: ordersOf(id).filter((o) => o.status.startsWith("Processing") || o.status.startsWith("Draft")).length,
-    channels: CHANNELS,
+    channels: channelsWithStatus(), // each carries configured/maskedKey/authNote
   };
 }
 

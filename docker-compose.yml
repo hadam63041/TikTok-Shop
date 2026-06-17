@@ -32,6 +32,8 @@ services:
       ALIEXPRESS_APP_KEY: ${ALIEXPRESS_APP_KEY:-}
       ALIEXPRESS_APP_SECRET: ${ALIEXPRESS_APP_SECRET:-}
       ALIEXPRESS_TRACKING_ID: ${ALIEXPRESS_TRACKING_ID:-}
+      TIKTOK_SHOP_APP_KEY: ${TIKTOK_SHOP_APP_KEY:-}
+      TIKTOK_SHOP_APP_SECRET: ${TIKTOK_SHOP_APP_SECRET:-}
     volumes:
       - hermes_data:/data       # persists state.json across rebuilds
 

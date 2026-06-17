@@ -11,6 +11,7 @@ const state = {
   supplierTab: { zendrop: 'connection', aliexpress: 'connection' }, // per-supplier sub-tab
   supplierKeyRevealed: {},     // supplierId -> full key once user clicks reveal
   supplierVerify: {},          // supplierId -> live-check result
+  channelKeyRevealed: {},      // channelId -> full key once user clicks reveal
   expandedMetric: null,        // which finance KPI drawer is open
   expandedCompetitors: {},     // trendId -> bool
   modelsOpen: false,           // global AI-models panel
@@ -1564,10 +1565,10 @@ function supplierProductCard(id, p, channels) {
         <div class="zd-sub">List to marketplaces</div>
         <div class="zd-channels">
           ${channels.map((c) => `
-            <button class="zd-channel-chip ${listed.has(c.id) ? 'on' : ''}"
+            <button class="zd-channel-chip ${listed.has(c.id) ? 'on' : ''} ${c.configured ? 'linked' : ''}"
                     onclick="toggleChannelListing('${id}','${p.id}','${c.id}')"
-                    title="${listed.has(c.id) ? 'Listed — click to remove' : 'List to ' + escapeHtml(c.name)}">
-              ${c.icon} ${escapeHtml(c.name)} ${listed.has(c.id) ? '✓' : '+'}
+                    title="${c.configured ? escapeHtml(c.name) + ' — API linked. ' : ''}${listed.has(c.id) ? 'Listed — click to remove' : 'List to ' + escapeHtml(c.name)}">
+              ${c.icon} ${escapeHtml(c.name)}${c.configured ? ' 🔗' : ''} ${listed.has(c.id) ? '✓' : '+'}
             </button>`).join('')}
         </div>
         <button class="link-toggle linked" style="width:100%;margin-top:10px" onclick="listToAllChannels('${id}','${p.id}')">📣 List to all sites</button>
@@ -1585,27 +1586,44 @@ function supplierChannelView(id, channelId) {
   const sname = cache.supplier[id]?.status?.provider ?? id;
   const products = (cache.supplier[id]?.products?.products ?? []).filter((p) => (p.channels ?? []).includes(channelId));
   const catalogValue = products.reduce((s, p) => s + (p.retail || 0), 0);
+  const connected = ch.configured;
+  const revealed = state.channelKeyRevealed[channelId];
   return `
     <div class="kpi-grid">
       <div class="card kpi"><div class="label">Channel</div>
         <div class="value" style="font-size:20px">${ch.icon} ${escapeHtml(ch.name)}</div>
         <div class="hint">${escapeHtml(sname)} → sales channel</div></div>
       <div class="card kpi"><div class="label">Connection</div>
-        <div class="value" style="font-size:20px">🔴 Not connected</div>
-        <div class="hint">${escapeHtml(ch.name)} listing API pending</div></div>
+        <div class="value" style="font-size:20px">${connected ? '🟢 Linked' : '🔴 Not connected'}</div>
+        <div class="hint">${connected ? 'App key + secret linked' : escapeHtml(ch.name) + ' listing API pending'}</div></div>
       <div class="card kpi"><div class="label">Listed products</div>
         <div class="value">${products.length}</div>
         <div class="hint">${money(catalogValue, 2)} catalog value</div></div>
     </div>
 
-    <div class="card section-gap">
-      <div class="panel-title">Connect ${escapeHtml(ch.name)}</div>
-      <div class="muted" style="font-size:12.5px;line-height:1.55">
-        Listings created here are <b>drafts</b>. To publish live to ${escapeHtml(ch.name)}, connect its API
-        (key / OAuth) — then the agent can push these products with one click. Marketplace credentials live
-        server-side in <code>HermesAgent/.env</code>, never in the dashboard.
-      </div>
-    </div>
+    ${(ch.envKeys ?? []).length ? `
+      <div class="card section-gap">
+        <div class="panel-title">${escapeHtml(ch.name)} API credential <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">— ${ch.envKeys.map(escapeHtml).join(', ')}</span></div>
+        <div class="cred-row">
+          <span class="muted">App key</span>
+          <code class="cred-value">${escapeHtml(revealed ?? ch.maskedKey ?? '—')}</code>
+          ${connected ? (revealed
+            ? `<button class="link-toggle linked" onclick="navigator.clipboard.writeText(state.channelKeyRevealed['${channelId}']); this.textContent='Copied ✓'">Copy</button>`
+            : `<button class="link-toggle" onclick="revealChannelKey('${channelId}')">Reveal API code</button>`) : ''}
+        </div>
+        <div class="cred-note">
+          ${connected ? '🟢' : '🔴'} ${escapeHtml(ch.authNote ?? 'Add this channel’s API credentials to link it.')}
+          Stored server-side in <code>HermesAgent/.env</code>, never baked into the dashboard.
+        </div>
+      </div>` : `
+      <div class="card section-gap">
+        <div class="panel-title">Connect ${escapeHtml(ch.name)}</div>
+        <div class="muted" style="font-size:12.5px;line-height:1.55">
+          Listings created here are <b>drafts</b>. To publish live to ${escapeHtml(ch.name)}, connect its API
+          (key / OAuth) — then the agent can push these products with one click. Marketplace credentials live
+          server-side in <code>HermesAgent/.env</code>, never in the dashboard.
+        </div>
+      </div>`}
 
     <div class="panel-title">${escapeHtml(sname)} products listed to ${escapeHtml(ch.name)}</div>
     ${products.length ? `
@@ -1613,6 +1631,12 @@ function supplierChannelView(id, channelId) {
         ${products.map((p) => supplierChannelProductCard(id, p, ch)).join('')}
       </div>` : `
       <div class="card"><span class="muted">No products listed to ${escapeHtml(ch.name)} yet. Go to 📦 Products and click "${escapeHtml(ch.name)}" or "List to all sites".</span></div>`}`;
+}
+
+async function revealChannelKey(channelId) {
+  try { state.channelKeyRevealed[channelId] = await HermesBridge.getChannelKey(channelId); }
+  catch (err) { state.channelKeyRevealed[channelId] = `(${err.message})`; }
+  render();
 }
 
 function supplierChannelProductCard(id, p, ch) {
