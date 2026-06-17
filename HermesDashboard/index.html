@@ -14,7 +14,7 @@
   <header>
     <div class="brand">⚡ HERMES <span>COMMAND</span></div>
     <button class="models-btn" onclick="toggleModelsPanel()">🧠 AI Models</button>
-    <button class="models-btn console-btn" onclick="toggleConsole()">⌨️ Console</button>
+    <button class="models-btn console-btn" onclick="openAgentView('hermes')">⌨️ Console</button>
     <div class="agent-status" id="agent-status">
       <span class="dot"></span>
       <span class="label">Agent offline // simulated data-feed</span>
@@ -42,7 +42,7 @@
   <aside id="sidebar"></aside>
   <main id="content"></main>
   <div id="modal"></div>
-  <div id="console"></div>
+  <div id="agentview"></div>
 
   <script src="data.js"></script>
   <script src="app.js"></script>

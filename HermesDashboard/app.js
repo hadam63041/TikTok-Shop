@@ -160,8 +160,8 @@ function renderSidebar() {
     </div>
     <div class="sb-agents">
       ${agents.map((a) => `
-        <button class="sb-agent ${consoleState.open && consoleState.agentId === a.id ? 'active' : ''} ${a.id === 'hermes' ? 'hub' : ''}"
-                style="--accent:${a.color}" onclick="openAgentChat('${a.id}')" title="${escapeHtml(a.name)} — ${escapeHtml(a.blurb)}">
+        <button class="sb-agent ${agentView.open && agentView.agentId === a.id ? 'active' : ''} ${a.id === 'hermes' ? 'hub' : ''}"
+                style="--accent:${a.color}" onclick="openAgentView('${a.id}')" title="${escapeHtml(a.name)} — ${escapeHtml(a.blurb)}">
           <span class="sb-icon">${a.icon}</span>
           <span class="sb-meta">
             <span class="sb-name">${escapeHtml(a.name)}</span>
@@ -178,93 +178,252 @@ function toggleSidebar() {
   renderSidebar();
 }
 
-/* ---------------- Agent console (chat with the selected agent) ---------------- */
+/* ---------------- Agent workspace (full-screen per-agent view) ----------------
+   Clicking any agent in the left menu opens a full-screen workspace: its
+   activities & workflows, a live chat + persistent chat log, and a readout of
+   how it's learning/evolving (tools exercised, focus areas, timeline). */
 
-const consoleState = { open: false, busy: false, agentId: 'hermes', threads: {} };
-const agentThread = (id) => (consoleState.threads[id] ??= []);
+const agentView = { open: false, agentId: 'hermes', profile: null, busy: false, error: null, loading: false };
 const agentMeta = (id) => (cache.agents ?? []).find((a) => a.id === id)
   ?? { id, name: id, icon: '🤖', color: '#02d7f2', blurb: '' };
 
-function openAgentChat(id) {
-  consoleState.agentId = id;
-  consoleState.open = true;
-  renderConsole();
+async function openAgentView(id) {
+  agentView.open = true;
+  agentView.agentId = id;
+  agentView.profile = null;
+  agentView.error = null;
+  agentView.busy = false;
+  agentView.loading = true;
+  document.body.classList.add('av-locked');
+  renderAgentView();
   renderSidebar();
-  setTimeout(() => $('#console-input')?.focus(), 50);
+  await loadAgentProfile();
+  setTimeout(() => $('#av-input')?.focus(), 60);
 }
 
-// Header "Console" button → talk to Hermes.
-function toggleConsole() {
-  if (consoleState.open && consoleState.agentId === 'hermes') {
-    consoleState.open = false;
-  } else {
-    consoleState.agentId = 'hermes';
-    consoleState.open = true;
+async function loadAgentProfile() {
+  try {
+    agentView.profile = await HermesBridge.getAgentProfile(agentView.agentId);
+    agentView.error = null;
+  } catch (err) {
+    agentView.error = err.message;
   }
-  renderConsole();
-  renderSidebar();
-  if (consoleState.open) setTimeout(() => $('#console-input')?.focus(), 50);
+  agentView.loading = false;
+  renderAgentView();
 }
-function closeConsole() { consoleState.open = false; renderConsole(); renderSidebar(); }
 
-async function sendConsoleMessage() {
-  const input = $('#console-input');
+function closeAgentView() {
+  agentView.open = false;
+  document.body.classList.remove('av-locked');
+  renderAgentView();
+  renderSidebar();
+}
+
+async function resetAgentView() {
+  const id = agentView.agentId;
+  if (!confirm('Reset this agent? Clears its working memory and chat log.')) return;
+  await HermesBridge.resetAgent(id);
+  await loadAgentProfile();
+}
+
+async function sendAgentMessage() {
+  const input = $('#av-input');
   const text = input?.value.trim();
-  if (!text || consoleState.busy) return;
-  const id = consoleState.agentId;
-  const thread = agentThread(id);
+  if (!text || agentView.busy) return;
+  const id = agentView.agentId;
   input.value = '';
-  thread.push({ who: 'you', text });
-  consoleState.busy = true;
-  renderConsole();
+  // Optimistic: show the user's line + a busy bubble immediately.
+  agentView.profile?.log?.messages?.push({ who: 'you', text, at: new Date().toISOString() });
+  agentView.busy = true;
+  agentView.error = null;
+  renderAgentView();
   try {
     const res = await HermesBridge.chatWithAgent(id, text);
-    const actionNote = res.actions?.length
-      ? '\n— actions: ' + res.actions.map((a) => `${a.tool}${a.ok === false ? ' ✗' : ''}`).join(', ')
-      : '';
-    thread.push({ who: 'agent', text: res.reply + actionNote });
-    // The agent may have changed data (budgets, listings, designs) — refresh.
+    if (res.error) agentView.error = res.error;
+    // Pull the authoritative log + refreshed insights back from the server.
+    await loadAgentProfile();
+    // The agent may have changed data (budgets, listings, designs) — refresh dashboard behind.
     if (HermesBridge.connected && res.actions?.length) {
       cache.businesses = await HermesBridge.getBusinesses();
       cache.aiModels = await HermesBridge.getAIModels();
       cache.designLibrary = await HermesBridge.getDesigns();
+      cache.agents = await HermesBridge.getAgents();
       for (const t of cache.productTypes) cache.designs[t] = await HermesBridge.getEtsyDesigns(t);
       for (const c of cache.fiverrCategories) cache.gigs[c] = await HermesBridge.getFiverrGigs(c);
       render();
     }
   } catch (err) {
-    thread.push({ who: 'agent', text: `Error: ${err.message}` });
+    agentView.error = err.message;
+  } finally {
+    agentView.busy = false;
+    renderAgentView();
   }
-  consoleState.busy = false;
-  renderConsole();
 }
 
-function renderConsole() {
-  const el = $('#console');
-  if (!consoleState.open) { el.innerHTML = ''; return; }
-  const id = consoleState.agentId;
-  const meta = agentMeta(id);
-  const thread = agentThread(id);
+function avTimestamp(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function renderAgentView() {
+  const el = $('#agentview');
+  if (!el) return;
+  if (!agentView.open) { el.innerHTML = ''; return; }
+  const id = agentView.agentId;
+  const p = agentView.profile;
+  const meta = p ?? agentMeta(id);
+  const accent = meta.color || '#02d7f2';
+
   el.innerHTML = `
-    <div class="console-panel" style="--accent:${meta.color}">
-      <div class="console-head">
-        <span class="panel-title" style="margin:0">${meta.icon} ${escapeHtml(meta.name)} ${id === 'hermes' ? 'console' : 'agent'}</span>
-        <button class="modal-close" onclick="closeConsole()">✕</button>
-      </div>
-      <div class="console-log" id="console-log">
-        ${thread.length ? '' : `<div class="console-msg agent">${escapeHtml(AGENT_HINTS[id] ?? 'How can I help?')}</div>`}
-        ${thread.map((m) => `
-          <div class="console-msg ${m.who === 'you' ? 'you' : 'agent'}">${escapeHtml(m.text)}</div>`).join('')}
-        ${consoleState.busy ? '<div class="console-msg agent busy">▍processing…</div>' : ''}
-      </div>
-      <div class="console-input-row">
-        <input id="console-input" type="text" placeholder="Message ${escapeHtml(meta.name)}…"
-               onkeydown="if (event.key === 'Enter') sendConsoleMessage()" />
-        <button class="link-toggle" onclick="sendConsoleMessage()">Send</button>
+    <div class="av-overlay" style="--accent:${accent}">
+      <div class="av-shell card">
+        <div class="av-head">
+          <div class="av-id">
+            <span class="av-avatar">${meta.icon ?? '🤖'}</span>
+            <div class="av-id-text">
+              <div class="av-name">${escapeHtml(meta.name ?? id)}
+                <span class="av-dot ${meta.online ? 'on' : ''}" title="${meta.online ? 'online' : 'offline'}"></span>
+              </div>
+              <div class="av-blurb">${escapeHtml(meta.blurb ?? '')}${p?.backend ? ` · <span class="av-brain">${escapeHtml(p.backend)}</span>` : ''}</div>
+            </div>
+          </div>
+          <div class="av-head-actions">
+            <button class="av-btn" onclick="resetAgentView()" title="Clear memory & chat log">↻ Reset</button>
+            <button class="modal-close" onclick="closeAgentView()">✕ Close</button>
+          </div>
+        </div>
+
+        <div class="av-body">
+          ${avChatColumn(id, meta)}
+          ${avInfoColumn(p)}
+        </div>
       </div>
     </div>`;
-  const log = $('#console-log');
+  const log = $('#av-log');
   if (log) log.scrollTop = log.scrollHeight;
+}
+
+function avChatColumn(id, meta) {
+  const messages = agentView.profile?.log?.messages ?? [];
+  return `
+    <div class="av-chat">
+      <div class="av-col-title">💬 Conversation${messages.length ? ` <span class="av-count">${messages.filter((m) => m.who === 'you').length} sent</span>` : ''}</div>
+      <div class="av-log" id="av-log">
+        ${agentView.loading ? '<div class="console-msg agent busy">▍loading…</div>' : ''}
+        ${!agentView.loading && !messages.length ? `<div class="console-msg agent">${escapeHtml(AGENT_HINTS[id] ?? 'How can I help?')}</div>` : ''}
+        ${messages.map(avMessage).join('')}
+        ${agentView.busy ? '<div class="console-msg agent busy">▍thinking…</div>' : ''}
+        ${agentView.error ? `<div class="console-msg agent" style="border-color:var(--red);color:var(--red)">⚠️ ${escapeHtml(agentView.error)}</div>` : ''}
+      </div>
+      <div class="console-input-row">
+        <input id="av-input" type="text" placeholder="Message ${escapeHtml(meta.name ?? id)}…"
+               ${agentView.busy ? 'disabled' : ''}
+               onkeydown="if (event.key === 'Enter') sendAgentMessage()" />
+        <button class="link-toggle" ${agentView.busy ? 'disabled' : ''} onclick="sendAgentMessage()">Send</button>
+      </div>
+    </div>`;
+}
+
+function avMessage(m) {
+  const actions = (m.actions ?? []).filter((a) => a.tool);
+  const actionsHtml = actions.length
+    ? `<div class="av-msg-actions">${actions.map((a) =>
+        `<span class="av-action ${a.ok === false ? 'fail' : ''}">${escapeHtml(humanizeToolClient(a.tool))}${a.ok === false ? ' ✗' : ' ✓'}</span>`).join('')}</div>`
+    : '';
+  return `
+    <div class="console-msg ${m.who === 'you' ? 'you' : 'agent'}">
+      ${escapeHtml(m.text)}
+      ${actionsHtml}
+      ${m.at ? `<div class="av-time">${avTimestamp(m.at)}</div>` : ''}
+    </div>`;
+}
+
+function humanizeToolClient(name) {
+  const s = String(name).replace(/_/g, ' ').trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function avInfoColumn(p) {
+  if (!p) return `<div class="av-info"><div class="av-card"><span class="muted">Loading agent…</span></div></div>`;
+  const ins = p.insights ?? {};
+  return `
+    <div class="av-info">
+      ${avWorkflowCard(p)}
+      ${avLearningCard(p, ins)}
+    </div>`;
+}
+
+function avWorkflowCard(p) {
+  const tools = p.tools ?? [];
+  return `
+    <div class="av-card">
+      <div class="av-col-title">⚙️ Activities &amp; workflow</div>
+      ${p.mission ? `<p class="av-mission">${escapeHtml(p.mission)}</p>` : ''}
+      <div class="av-subhead">Capabilities <span class="av-count">${tools.length}</span></div>
+      ${tools.length ? `
+        <div class="av-tools">
+          ${tools.map((t) => `
+            <div class="av-tool">
+              <div class="av-tool-name">${escapeHtml(humanizeToolClient(t.name))}</div>
+              ${t.description ? `<div class="av-tool-desc">${escapeHtml(t.description)}</div>` : ''}
+            </div>`).join('')}
+        </div>` : `<div class="muted" style="font-size:12px">This agent runs on a remote brain — its tools live on the VPS.</div>`}
+    </div>`;
+}
+
+function avLearningCard(p, ins) {
+  const tools = ins.toolUsage ?? [];
+  const maxUse = Math.max(1, ...tools.map((t) => t.count));
+  const topics = ins.topics ?? [];
+  const milestones = ins.milestones ?? [];
+  return `
+    <div class="av-card">
+      <div class="av-col-title">🧠 Learning &amp; evolution</div>
+
+      <div class="av-stats">
+        ${avStat(ins.turns ?? 0, 'exchanges')}
+        ${avStat(ins.actionsTaken ?? 0, 'actions run')}
+        ${avStat(ins.distinctTools ?? 0, 'skills used')}
+      </div>
+
+      <div class="av-subhead">Skills exercised</div>
+      ${tools.length ? `
+        <div class="av-bars">
+          ${tools.slice(0, 8).map((t) => `
+            <div class="av-bar-row">
+              <span class="av-bar-label" title="${escapeHtml(t.tool)}">${escapeHtml(t.label ?? humanizeToolClient(t.tool))}</span>
+              <span class="av-bar-track"><span class="av-bar-fill" style="width:${Math.round((t.count / maxUse) * 100)}%"></span></span>
+              <span class="av-bar-val">${t.count}</span>
+            </div>`).join('')}
+        </div>` : `<div class="muted" style="font-size:12px">No tools used yet — they'll appear here as the agent works.</div>`}
+
+      <div class="av-subhead">Focus areas <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">— what it's asked about most</span></div>
+      ${topics.length ? `
+        <div class="av-topics">
+          ${topics.map((t) => `<span class="av-topic">${escapeHtml(t.term)}${t.count > 1 ? `<b>${t.count}</b>` : ''}</span>`).join('')}
+        </div>` : `<div class="muted" style="font-size:12px">No focus areas yet.</div>`}
+
+      <div class="av-subhead">Evolution timeline</div>
+      ${milestones.length ? `
+        <div class="av-timeline">
+          ${milestones.map((m) => `
+            <div class="av-event ${m.kind}">
+              <span class="av-event-dot"></span>
+              <span class="av-event-text">${escapeHtml(m.text)}</span>
+              <span class="av-event-time">${avTimestamp(m.at)}</span>
+            </div>`).join('')}
+        </div>` : `<div class="muted" style="font-size:12px">No history yet. Start a conversation to build it.</div>`}
+
+      <div class="av-memory-note">
+        🔒 Working memory holds the full thread during a session, so replies build on earlier ones.
+        This log persists across restarts; <b>Reset</b> clears both.
+      </div>
+    </div>`;
+}
+
+function avStat(value, label) {
+  return `<div class="av-stat"><div class="av-stat-val">${value}</div><div class="av-stat-label">${label}</div></div>`;
 }
 function toggleMetric(id) { state.expandedMetric = state.expandedMetric === id ? null : id; render(); }
 function toggleCompetitors(id) { state.expandedCompetitors[id] = !state.expandedCompetitors[id]; render(); }

@@ -406,4 +406,24 @@ const HermesBridge = {
     }
     return this.api(`/agents/${id}/chat`, { message });
   },
+
+  /* Full agent workspace payload: meta + workflow (mission/tools) + chat log +
+     learning/evolution insights. Offline → a populated shell so the screen
+     still renders (empty log, zeroed insights). */
+  async getAgentProfile(id) {
+    if (this.connected) return this.api(`/agents/${id}/profile`);
+    const meta = (await this.getAgents()).find((a) => a.id === id)
+      ?? { id, name: id, icon: '🤖', color: '#02d7f2', blurb: '' };
+    return {
+      ...meta, backend: 'offline — start HermesAgent', mission: '', tools: [],
+      log: { messages: [], createdAt: null },
+      insights: { turns: 0, exchanges: 0, actionsTaken: 0, distinctTools: 0, toolUsage: [], topics: [], milestones: [], createdAt: null, lastAt: null },
+    };
+  },
+
+  /* Reset an agent: clears its working memory AND its persisted chat log. */
+  async resetAgent(id) {
+    if (!this.connected) return { ok: true };
+    return this.api(`/agents/${id}/reset`, {});
+  },
 };

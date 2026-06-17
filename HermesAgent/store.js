@@ -165,6 +165,11 @@ function seed() {
     designLibrary: [],
 
     activity: [], // audit log of every action the agent takes
+
+    // Per-agent conversation logs (agentId -> { messages, createdAt }). Drives
+    // the full-screen agent workspace: the visible chat history plus the
+    // derived "learning & evolution" stats. Survives restarts; Reset clears it.
+    agentLogs: {},
   };
 }
 
@@ -191,6 +196,36 @@ export function logActivity(entry) {
   state.activity.unshift({ ...entry, at: new Date().toISOString() });
   state.activity = state.activity.slice(0, 200);
   persist();
+}
+
+/** Append one user→agent exchange to an agent's persistent conversation log. */
+export function recordAgentTurn(agentId, { user, reply, actions = [] }) {
+  if (!state.agentLogs) state.agentLogs = {};
+  const log = (state.agentLogs[agentId] ??= { messages: [], createdAt: new Date().toISOString() });
+  const at = new Date().toISOString();
+  log.messages.push({ who: "you", text: String(user ?? ""), at });
+  log.messages.push({
+    who: "agent",
+    text: String(reply ?? ""),
+    actions: (actions ?? []).map((a) => ({ tool: a.tool, ok: a.ok !== false })),
+    at,
+  });
+  log.messages = log.messages.slice(-300); // keep the tail bounded
+  log.lastAt = at;
+  persist();
+}
+
+/** The persisted conversation log for one agent (empty shell if none yet). */
+export function getAgentLog(agentId) {
+  return (state.agentLogs && state.agentLogs[agentId]) || { messages: [], createdAt: null };
+}
+
+/** Wipe an agent's persisted conversation log (paired with reset()). */
+export function clearAgentLog(agentId) {
+  if (state.agentLogs && state.agentLogs[agentId]) {
+    delete state.agentLogs[agentId];
+    persist();
+  }
 }
 
 /** Find a design or gig anywhere in the catalog by id. */

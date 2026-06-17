@@ -8,8 +8,9 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { state, persist, findAsset } from "./store.js";
+import { state, persist, findAsset, getAgentLog } from "./store.js";
 import { connectorStatus } from "./connectors.js";
+import { deriveInsights } from "./insights.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_DIR = path.join(__dirname, "..", "HermesDashboard");
@@ -273,6 +274,16 @@ function dynamicRoute(method, urlPath, body) {
     persist();
     return biz;
   }
+  // Full agent profile: meta + workflow (mission/tools) + persisted chat log
+  // + derived "learning & evolution" insights. Powers the agent workspace.
+  match = urlPath.match(/^\/api\/agents\/([\w-]+)\/profile$/);
+  if (method === "GET" && match) {
+    const prof = roster.profile(match[1]);
+    if (!prof) throw new Error(`unknown agent ${match[1]}`);
+    const log = getAgentLog(match[1]);
+    return { ...prof, log, insights: deriveInsights(log) };
+  }
+
   // Chat with / reset a specific roster agent.
   match = urlPath.match(/^\/api\/agents\/([\w-]+)\/(chat|reset)$/);
   if (method === "POST" && match) {

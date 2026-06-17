@@ -8,6 +8,8 @@
 import { createAgent } from "./agent.js";
 import { createOpenAIAgent } from "./agent-openai.js";
 import { createHermesAgent } from "./agent-hermes.js";
+import { buildToolset } from "./connectors.js";
+import { recordAgentTurn, clearAgentLog } from "./store.js";
 
 // Pick the brain for the built-in agents:
 //   anthropic (default) · openai (OPENAI_API_KEY) · hermes (the VPS Hermes
@@ -18,6 +20,36 @@ const makeAgent = (cfg = {}) => {
   if (BACKEND === "openai") return createOpenAIAgent(cfg);
   return createAgent(cfg);
 };
+
+// Human-readable label for whichever brain the built-in agents run on.
+const brainLabel =
+  BACKEND === "hermes" ? "VPS Hermes (OpenAI OAuth brain)"
+  : BACKEND === "openai" ? `OpenAI · ${process.env.OPENAI_MODEL || "gpt-5"}`
+  : "Claude · claude-opus-4-8";
+
+// Map every tool name to its description, so an agent's profile can show what it
+// can actually do (its workflow), not just the tool names.
+const TOOL_DESCRIPTIONS = Object.fromEntries(
+  buildToolset().map((t) => [t.name, t.description]),
+);
+const toolEntries = (names) =>
+  (names ?? []).map((name) => ({ name, description: TOOL_DESCRIPTIONS[name] ?? "" }));
+
+// Wrap an agent so every exchange is recorded to its persistent log (which
+// powers the workspace's chat history + learning stats), and reset() also
+// clears that log. Direct chats AND Hermes delegations both flow through here.
+function withLog(id, agent) {
+  return {
+    async chat(message) {
+      const res = await agent.chat(message);
+      try { recordAgentTurn(id, { user: message, reply: res.reply, actions: res.actions }); } catch { /* logging is best-effort */ }
+      return res;
+    },
+    reset() { agent.reset(); try { clearAgentLog(id); } catch { /* ignore */ } },
+    get online() { return agent.online; },
+    status() { return agent.status(); },
+  };
+}
 
 const PORTFOLIO =
   "Portfolio: Etsy print-on-demand shops (candles, magnets, shirts, hats) fulfilled via Printify; " +
@@ -79,6 +111,14 @@ export const AGENT_SPECS = [
 ];
 
 const HERMES_META = { id: "hermes", name: "Hermes", icon: "⚡", color: "#fcee0a", blurb: "Chief orchestrator" };
+const HERMES_MISSION =
+  "Run the whole portfolio. Monitor performance, research market trends, generate and publish product " +
+  "designs, manage gig deliverables, and tune ad budgets — acting directly with the full toolset, or " +
+  "handing focused work to the specialist sub-agents via delegation.";
+const CODEX_MISSION =
+  "External agent running on your VPS (the Nous 'Hermes' platform), powered by OpenAI via OAuth. Hermes " +
+  "delegates heavier reasoning and coding-style tasks here; you can also brief it directly. Its brain and " +
+  "tools live on the VPS, reached over a WebSocket bridge — no key is held locally.";
 
 // External third-party agent: the Nous "Hermes" platform on your VPS, linked to
 // OpenAI via OAuth. We reach it over its WebSocket (see agent-hermes.js) — the
@@ -89,18 +129,18 @@ const EXTERNAL_META = { id: "codex", name: "Codex", icon: "🛰️", color: "#10
 export function createRoster() {
   const specialists = {};
   for (const s of AGENT_SPECS) {
-    specialists[s.id] = makeAgent({
+    specialists[s.id] = withLog(s.id, makeAgent({
       toolNames: s.tools,
       systemPrompt:
         `You are the ${s.name} agent on the "Hermes Command" team, reporting to the Hermes orchestrator.\n` +
         `${PORTFOLIO}\n${RULES}\n\n` +
         `Your job — ${s.name}: ${s.prompt}`,
-    });
+    }));
   }
 
   // The external VPS Hermes agent (OAuth brain over WebSocket) — also a
   // delegation target. Independent of AGENT_BACKEND.
-  const external = createHermesAgent();
+  const external = withLog(EXTERNAL_META.id, createHermesAgent());
   const delegatable = { ...specialists, [EXTERNAL_META.id]: external };
 
   // Hermes can hand a task to any specialist (or the external Codex agent).
@@ -128,11 +168,38 @@ export function createRoster() {
     },
   };
 
-  const hermes = makeAgent({ extraTools: [delegateTool] }); // default Hermes prompt + all tools + delegate
+  const hermes = withLog("hermes", makeAgent({ extraTools: [delegateTool] })); // default Hermes prompt + all tools + delegate
   const all = { hermes, ...specialists, [EXTERNAL_META.id]: external };
+
+  // Every tool Hermes itself can drive (all connector tools + delegation).
+  const hermesTools = [
+    ...buildToolset().map((t) => ({ name: t.name, description: t.description })),
+    { name: delegateTool.name, description: delegateTool.description },
+  ];
+
+  // Static "what this agent is and does" — meta + brain + mission + tools.
+  function profile(id) {
+    if (id === "hermes") {
+      return { ...HERMES_META, online: hermes.online, backend: brainLabel, mission: HERMES_MISSION, tools: hermesTools };
+    }
+    const spec = AGENT_SPECS.find((s) => s.id === id);
+    if (spec) {
+      return {
+        id: spec.id, name: spec.name, icon: spec.icon, color: spec.color, blurb: spec.blurb,
+        online: specialists[id].online, backend: brainLabel,
+        mission: spec.prompt.charAt(0).toUpperCase() + spec.prompt.slice(1),
+        tools: toolEntries(spec.tools),
+      };
+    }
+    if (id === EXTERNAL_META.id) {
+      return { ...EXTERNAL_META, online: external.online, backend: "VPS Hermes · OpenAI Codex (OAuth)", mission: CODEX_MISSION, tools: [] };
+    }
+    return null;
+  }
 
   return {
     get: (id) => all[id],
+    profile,
     list: () => [
       { ...HERMES_META, online: hermes.online },
       ...AGENT_SPECS.map((s) => ({ id: s.id, name: s.name, icon: s.icon, color: s.color, blurb: s.blurb, tools: s.tools, online: specialists[s.id].online })),
