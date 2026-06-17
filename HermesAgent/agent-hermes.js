@@ -8,7 +8,7 @@
 //   2. POST /api/auth/ws-ticket (cookie)                               → {ticket} (30s TTL)
 //   3. WS  wss://host/api/ws?ticket=…  (JSON-RPC 2.0)
 //   4. request "session.create" {close_on_disconnect:true}            → {session_id}
-//   5. request "prompt.submit"  {session_id, prompt}                  → {status:"streaming"}
+//   5. request "prompt.submit"  {session_id, text}                    → {status:"streaming"}
 //   6. server emits {method:"event", params:{type:…}}; the final reply
 //      arrives as type "message.complete" with params.payload.text
 
@@ -111,7 +111,7 @@ export function createHermesAgent({ systemPrompt = null } = {}) {
       if (systemPrompt && !primed) { prompt = `${systemPrompt}\n\n----\n${prompt}`; primed = true; }
       const reply = await new Promise((resolve, reject) => {
         turn = { resolve, reject, timer: setTimeout(() => { turn = null; reject(new Error("reply timed out")); }, REPLY_TIMEOUT) };
-        rpc("prompt.submit", { session_id: sessionId, prompt }).catch((err) => {
+        rpc("prompt.submit", { session_id: sessionId, text: prompt }).catch((err) => {
           if (turn) { clearTimeout(turn.timer); turn = null; }
           reject(err);
         });
