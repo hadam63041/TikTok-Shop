@@ -34,7 +34,9 @@ const { printifyStatus, printifyShops, printifyProducts, printifyConfigured,
 const { generateListingCopy } = await import("./describe.js");
 const { handleMcpRpc } = await import("./mcp.js");
 const { supplierStatus, supplierProductsPayload, supplierOrders, supplierKey, supplierVerify,
-        listProductToChannels, unlistProductFromChannel, channelName, channelKey } = await import("./dropship.js");
+        listProductToChannels, unlistProductFromChannel, channelName, channelKey, getSupplierProduct } = await import("./dropship.js");
+const { tiktokAuthUrl, tiktokExchange, tiktokRefresh, tiktokDisconnect, tiktokFetchShops,
+        tiktokConnection, tiktokPublishProduct } = await import("./tiktok.js");
 const roster = createRoster();
 const agent = roster.get("hermes"); // back-compat: /api/agent/* talks to the orchestrator
 
@@ -184,6 +186,24 @@ const routes = {
     state.mockups = state.mockups.slice(0, 50);
     persist();
     return mockup;
+  },
+
+  // --- TikTok Shop OAuth (connect a real shop, then publish live) ---
+  "GET /api/channels/tiktok/auth-url": () => ({ url: tiktokAuthUrl() }),
+  "GET /api/channels/tiktok/connection": () => tiktokConnection(),
+  "POST /api/channels/tiktok/connect": (q, body) => {
+    if (!body.authCode) throw new Error("authCode required");
+    return tiktokExchange(body.authCode); // exchanges + fetches shops; returns connection
+  },
+  "POST /api/channels/tiktok/refresh": async () => { await tiktokRefresh(); return tiktokConnection(); },
+  "POST /api/channels/tiktok/shops": async () => ({ shops: await tiktokFetchShops() }),
+  "POST /api/channels/tiktok/disconnect": () => { tiktokDisconnect(); return { ok: true }; },
+  // Live publish a (supplier) product to the connected TikTok Shop. Customer-
+  // visible — the UI confirms before calling. Returns TikTok's raw response.
+  "POST /api/channels/tiktok/publish": async (q, body) => {
+    const prod = getSupplierProduct(body.supplier, body.productId);
+    if (!prod) throw new Error(`product ${body.productId} not found`);
+    return tiktokPublishProduct(prod);
   },
 
   // --- Dropship suppliers (Zendrop, AliExpress) ---

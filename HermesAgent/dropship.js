@@ -17,6 +17,7 @@
 
 import { state, persist } from "./store.js";
 import crypto from "node:crypto";
+import { tiktokConnection } from "./tiktok.js";
 
 // Sales channels a product can be listed to (shared across suppliers). A channel
 // with `envKeys` can be CONNECTED by supplying those credentials (server-side);
@@ -41,12 +42,15 @@ export function channelStatus(channelId) {
   const c = CHANNEL_BY_ID[channelId];
   if (!c) return null;
   const primary = c.envKeys?.[0] ? (process.env[c.envKeys[0]] || "") : "";
-  return {
+  const base = {
     id: c.id, name: c.name, icon: c.icon, envKeys: c.envKeys ?? [],
     configured: channelConfigured(c),
     maskedKey: primary ? `${primary.slice(0, 4)}${"•".repeat(8)}${primary.slice(-4)}` : null,
     authNote: c.authNote ?? null,
   };
+  // TikTok Shop carries an OAuth connection on top of the app credentials.
+  if (c.id === "tiktok") base.oauth = tiktokConnection();
+  return base;
 }
 export function channelsWithStatus() {
   return CHANNELS.map((c) => channelStatus(c.id));
@@ -300,6 +304,10 @@ export async function supplierVerify(id) {
 function findProduct(id, productId) {
   return productsOf(id).find((x) => x.id === productId)
     || (Array.isArray(liveCache[id]?.data) ? liveCache[id].data.find((x) => x.id === productId) : null);
+}
+/** Look up one product (seed or live-cached) — used by the publish route. */
+export function getSupplierProduct(id, productId) {
+  return findProduct(id, productId);
 }
 export function listProductToChannels(id, productId, channelInput) {
   const prod = findProduct(id, productId);

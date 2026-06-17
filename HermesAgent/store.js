@@ -216,6 +216,15 @@ function seed() {
     // the full-screen agent workspace: the visible chat history plus the
     // derived "learning & evolution" stats. Survives restarts; Reset clears it.
     agentLogs: {},
+
+    // TikTok Shop OAuth connection (per-shop access). Tokens are secrets —
+    // they live here in state.json (server-side, gitignored), never sent to the
+    // browser. See tiktok.js. Empty until the seller authorizes the app.
+    tiktok: {
+      accessToken: null, refreshToken: null,
+      accessExpireAt: 0, refreshExpireAt: 0, // absolute unix seconds
+      sellerName: null, openId: null, shops: [], connectedAt: null,
+    },
   };
 }
 

@@ -12,6 +12,7 @@ const state = {
   supplierKeyRevealed: {},     // supplierId -> full key once user clicks reveal
   supplierVerify: {},          // supplierId -> live-check result
   channelKeyRevealed: {},      // channelId -> full key once user clicks reveal
+  tiktokConnect: { busy: false, error: null, code: '' }, // TikTok Shop OAuth form
   expandedMetric: null,        // which finance KPI drawer is open
   expandedCompetitors: {},     // trendId -> bool
   modelsOpen: false,           // global AI-models panel
@@ -1587,6 +1588,7 @@ function supplierChannelView(id, channelId) {
   const products = (cache.supplier[id]?.products?.products ?? []).filter((p) => (p.channels ?? []).includes(channelId));
   const catalogValue = products.reduce((s, p) => s + (p.retail || 0), 0);
   const connected = ch.configured;
+  const live = ch.oauth?.connected;
   const revealed = state.channelKeyRevealed[channelId];
   return `
     <div class="kpi-grid">
@@ -1594,8 +1596,8 @@ function supplierChannelView(id, channelId) {
         <div class="value" style="font-size:20px">${ch.icon} ${escapeHtml(ch.name)}</div>
         <div class="hint">${escapeHtml(sname)} → sales channel</div></div>
       <div class="card kpi"><div class="label">Connection</div>
-        <div class="value" style="font-size:20px">${connected ? '🟢 Linked' : '🔴 Not connected'}</div>
-        <div class="hint">${connected ? 'App key + secret linked' : escapeHtml(ch.name) + ' listing API pending'}</div></div>
+        <div class="value" style="font-size:20px">${live ? '🟢 Connected' : connected ? '🟡 Linked' : '🔴 Not connected'}</div>
+        <div class="hint">${live ? 'shop authorized — can publish live' : connected ? 'app linked · authorize to publish' : escapeHtml(ch.name) + ' listing API pending'}</div></div>
       <div class="card kpi"><div class="label">Listed products</div>
         <div class="value">${products.length}</div>
         <div class="hint">${money(catalogValue, 2)} catalog value</div></div>
@@ -1625,6 +1627,8 @@ function supplierChannelView(id, channelId) {
         </div>
       </div>`}
 
+    ${channelId === 'tiktok' && connected ? tiktokOAuthCard(ch) : ''}
+
     <div class="panel-title">${escapeHtml(sname)} products listed to ${escapeHtml(ch.name)}</div>
     ${products.length ? `
       <div class="design-grid">
@@ -1637,6 +1641,85 @@ async function revealChannelKey(channelId) {
   try { state.channelKeyRevealed[channelId] = await HermesBridge.getChannelKey(channelId); }
   catch (err) { state.channelKeyRevealed[channelId] = `(${err.message})`; }
   render();
+}
+
+/* ----- TikTok Shop OAuth (authorize a real shop, then publish live) ----- */
+function tiktokOAuthCard(ch) {
+  const o = ch.oauth || {};
+  const c = state.tiktokConnect || {};
+  if (o.connected) {
+    return `
+      <div class="card section-gap" style="border-left:3px solid var(--green)">
+        <div class="panel-title">TikTok Shop — live connection</div>
+        <div class="muted" style="font-size:13px;line-height:1.5">
+          🟢 Connected to <b>${escapeHtml(o.shop || o.sellerName || 'your shop')}</b>${o.shopCount > 1 ? ` (+${o.shopCount - 1} more)` : ''}.
+          Products listed below can be published live to TikTok Shop.
+        </div>
+        <div class="design-actions" style="margin-top:10px;max-width:380px">
+          <button onclick="refreshTiktokShops()">↻ Refresh shops</button>
+          <button class="danger" onclick="disconnectTiktokShop()">Disconnect</button>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="card section-gap" style="border-left:3px solid var(--yellow)">
+      <div class="panel-title">Authorize your TikTok Shop (OAuth)</div>
+      <div class="muted" style="font-size:12.5px;line-height:1.55;margin-bottom:10px">
+        App credentials are linked. To publish live, authorize the app on your shop, then paste the
+        <code>auth_code</code> from the redirected URL.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;max-width:560px">
+        ${o.authUrl
+          ? `<a class="link-toggle" style="display:inline-block;text-align:center;text-decoration:none" href="${escapeHtml(o.authUrl)}" target="_blank" rel="noopener">① Authorize on TikTok Shop ↗</a>`
+          : `<div class="muted" style="font-size:12px;line-height:1.5">① In TikTok Shop Partner Center → your app → <b>Authorization</b>, open the authorization link and approve your shop. (Set <code>TIKTOK_SHOP_SERVICE_ID</code> in <code>.env</code> to show a one-click link here.)</div>`}
+        <input id="tt-code" class="mockup-input" type="text" placeholder="② Paste auth_code (or the full redirected URL)" value="${escapeHtml(c.code || '')}" />
+        <button class="link-toggle linked" ${c.busy ? 'disabled' : ''} onclick="connectTiktokShop()">${c.busy ? 'Connecting…' : '③ Connect shop'}</button>
+        ${c.error ? `<div class="verify-result warn">⚠️ ${escapeHtml(c.error)}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+async function refreshSupplierStatuses() {
+  await Promise.all(SUPPLIERS.map(async (s) => {
+    if (cache.supplier[s.id]) cache.supplier[s.id].status = await HermesBridge.getSupplierStatus(s.id);
+  }));
+}
+
+async function connectTiktokShop() {
+  const code = document.getElementById('tt-code')?.value.trim();
+  if (!code) { state.tiktokConnect = { busy: false, error: 'Paste the auth_code first.', code: '' }; render(); return; }
+  state.tiktokConnect = { busy: true, error: null, code };
+  render();
+  try {
+    await HermesBridge.connectTiktok(code);
+    state.tiktokConnect = { busy: false, error: null, code: '' };
+    await refreshSupplierStatuses();
+    render();
+  } catch (err) {
+    state.tiktokConnect = { busy: false, error: err.message, code };
+    render();
+  }
+}
+
+async function refreshTiktokShops() {
+  try { await HermesBridge.refreshTiktok(); await refreshSupplierStatuses(); render(); }
+  catch (err) { alert('Refresh failed: ' + err.message); }
+}
+
+async function disconnectTiktokShop() {
+  if (!confirm('Disconnect TikTok Shop? You can re-authorize anytime.')) return;
+  try { await HermesBridge.disconnectTiktok(); await refreshSupplierStatuses(); render(); }
+  catch (err) { alert('Disconnect failed: ' + err.message); }
+}
+
+async function publishToTiktok(supplier, productId) {
+  const p = (cache.supplier[supplier]?.products?.products || []).find((x) => x.id === productId);
+  if (!confirm(`Publish "${p?.name || productId}" live to your TikTok Shop? This creates a real product (as a draft you review in Seller Center).`)) return;
+  try {
+    const r = await HermesBridge.publishToTiktok(supplier, productId);
+    if (r.code === 0) alert('✅ Created on TikTok Shop (draft). Product id: ' + (r.data?.product_id || '—') + '\nReview & submit it in TikTok Seller Center.');
+    else alert('TikTok Shop responded: ' + (r.message || JSON.stringify(r)) + '\n(code ' + r.code + ')\n\nProduct creation needs a valid category/warehouse — share what it asks for and I\'ll map it.');
+  } catch (err) { alert('Publish failed: ' + err.message); }
 }
 
 function supplierChannelProductCard(id, p, ch) {
@@ -1657,6 +1740,7 @@ function supplierChannelProductCard(id, p, ch) {
         </div>
         ${cheapest ? `<div class="zd-ship-opt" style="margin:2px 0 8px">🚚 from <b>${cheapest.cost ? money(cheapest.cost, 2) : 'Free'}</b> · ${escapeHtml(String(cheapest.days))} days</div>` : ''}
         <div class="design-actions">
+          ${ch.id === 'tiktok' && ch.oauth?.connected ? `<button class="primary" onclick="publishToTiktok('${id}','${p.id}')">▲ Publish live</button>` : ''}
           <button class="danger" onclick="toggleChannelListing('${id}','${p.id}','${ch.id}')">⊘ Remove from ${escapeHtml(ch.name)}</button>
         </div>
       </div>

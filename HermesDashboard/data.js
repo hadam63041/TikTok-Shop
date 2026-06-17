@@ -391,6 +391,28 @@ const HermesBridge = {
     if (!this.connected) throw new Error('Agent offline — key is in HermesAgent/.env');
     return (await this.api(`/channels/${channelId}/key`)).key;
   },
+
+  // --- TikTok Shop OAuth (connect a real shop, then publish live) ---
+  async getTiktokConnection() {
+    if (!this.connected) return { configured: false, connected: false, authUrl: null };
+    return this.api('/channels/tiktok/connection');
+  },
+  async connectTiktok(authCode) {
+    if (!this.connected) throw new Error('Agent offline.');
+    return this.api('/channels/tiktok/connect', { authCode });
+  },
+  async refreshTiktok() {
+    if (!this.connected) throw new Error('Agent offline.');
+    return this.api('/channels/tiktok/refresh', {});
+  },
+  async disconnectTiktok() {
+    if (!this.connected) throw new Error('Agent offline.');
+    return this.api('/channels/tiktok/disconnect', {});
+  },
+  async publishToTiktok(supplier, productId) {
+    if (!this.connected) throw new Error('Agent offline.');
+    return this.api('/channels/tiktok/publish', { supplier, productId });
+  },
   // List / remove a product across marketplace channels (channel id or 'all').
   async listChannel(id, productId, channel) {
     if (!this.connected) throw new Error('Agent offline.');
