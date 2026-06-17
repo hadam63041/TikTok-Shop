@@ -234,6 +234,7 @@ for (const key of Object.keys(defaults)) {
 // Nested backfill: older state.json supplier products predate per-product
 // shipping options and marketplace channel listings — add them in place.
 for (const supplierId of ["zendrop", "aliexpress"]) {
+  if (loaded[supplierId] && !loaded[supplierId].listings) { loaded[supplierId].listings = {}; backfilled = true; }
   for (const p of loaded[supplierId]?.products ?? []) {
     if (!Array.isArray(p.channels)) { p.channels = []; backfilled = true; }
     if (!Array.isArray(p.shipping)) {

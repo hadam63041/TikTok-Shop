@@ -1536,6 +1536,14 @@ function supplierProducts(id) {
       </div>` : `<div class="card"><span class="muted">No products. ${HermesBridge.connected ? '' : 'Start the agent to load the catalog.'}</span></div>`}`;
 }
 
+// Product art: a real product photo when the live feed provides one, else the
+// gradient + emoji placeholder used by the seeded catalog.
+function supplierArt(p) {
+  return p.image
+    ? `<div class="design-art" style="background:#0d141b;background-image:url('${escapeHtml(p.image)}');background-size:cover;background-position:center"></div>`
+    : `<div class="design-art" style="background:linear-gradient(135deg,#13242c,#02d7f2)">${p.emoji ?? '📦'}</div>`;
+}
+
 function supplierProductCard(id, p, channels) {
   const margin = p.marginPct ?? (p.retail ? Math.round((1 - p.cost / p.retail) * 100) : 0);
   const listed = new Set(p.channels ?? []);
@@ -1543,7 +1551,7 @@ function supplierProductCard(id, p, channels) {
     `<div class="zd-ship-opt">🚚 <b>${escapeHtml(s.method)}</b> · ${escapeHtml(String(s.days))} days · ${s.cost ? money(s.cost, 2) : 'Free'}</div>`).join('');
   return `
     <div class="card design-card">
-      <div class="design-art" style="background:linear-gradient(135deg,#13242c,#02d7f2)">${p.emoji ?? '📦'}</div>
+      ${supplierArt(p)}
       <div class="design-body">
         <h4>${escapeHtml(p.name)}</h4>
         <div class="muted" style="font-size:12px;margin-bottom:8px">${escapeHtml(p.category || '')}${p.imported ? ` · in ${escapeHtml(p.store || 'store')}` : ''}</div>
@@ -1612,7 +1620,7 @@ function supplierChannelProductCard(id, p, ch) {
   const cheapest = (p.shipping ?? []).reduce((m, s) => (m == null || s.cost < m.cost ? s : m), null);
   return `
     <div class="card design-card">
-      <div class="design-art" style="background:linear-gradient(135deg,#13242c,#02d7f2)">${p.emoji ?? '📦'}</div>
+      ${supplierArt(p)}
       <div class="design-body">
         <h4>${escapeHtml(p.name)}</h4>
         <div class="design-meta">
