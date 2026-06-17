@@ -3,6 +3,10 @@
 *.env
 !.env.example
 
+# TLS certs (self-signed localhost cert/key — generated per machine)
+.cert/
+*.pem
+
 # Dependencies
 node_modules/
 

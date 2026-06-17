@@ -5,6 +5,7 @@
 //   open http://localhost:8787
 
 import http from "node:http";
+import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_DIR = path.join(__dirname, "..", "HermesDashboard");
 const ENV_FILE = path.join(__dirname, ".env");
 const PORT = Number(process.env.PORT || 8787);
+// Optional HTTPS: enabled when a TLS cert/key pair exists (self-signed is fine
+// for localhost). Generate one with the openssl command in DEPLOY.md / README.
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || 8443);
+const TLS_CERT = process.env.TLS_CERT || path.join(__dirname, ".cert", "cert.pem");
+const TLS_KEY = process.env.TLS_KEY || path.join(__dirname, ".cert", "key.pem");
 
 // ----- tiny .env loader (no dependency) -----
 if (fs.existsSync(ENV_FILE)) {
@@ -306,7 +312,7 @@ function dynamicRoute(method, urlPath, body) {
   return undefined;
 }
 
-const server = http.createServer(async (req, res) => {
+const requestHandler = async (req, res) => {
   const [urlPath, queryString] = req.url.split("?");
   const query = new URLSearchParams(queryString ?? "");
 
@@ -340,8 +346,9 @@ const server = http.createServer(async (req, res) => {
     const status = err.status ?? 400; // Anthropic APIError carries .status
     return json(res, status, { error: err.message });
   }
-});
+};
 
+const server = http.createServer(requestHandler);
 server.listen(PORT, () => {
   console.log(`⚡ Hermes agent on http://localhost:${PORT}`);
   console.log(`   dashboard:  http://localhost:${PORT}/`);
@@ -350,3 +357,12 @@ server.listen(PORT, () => {
     console.log(`   connector:  ${c.id.padEnd(11)} ${c.mode}`);
   }
 });
+
+// HTTPS on the same handler when a cert/key pair is present.
+if (fs.existsSync(TLS_CERT) && fs.existsSync(TLS_KEY)) {
+  https
+    .createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) }, requestHandler)
+    .listen(HTTPS_PORT, () => console.log(`   secure:     https://localhost:${HTTPS_PORT}/`));
+} else {
+  console.log(`   secure:     off — add a TLS cert to enable https (see README)`);
+}
