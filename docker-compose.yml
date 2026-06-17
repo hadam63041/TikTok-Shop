@@ -29,6 +29,9 @@ services:
       SERPAPI_KEY: ${SERPAPI_KEY:-}
       PRINTIFY_API_TOKEN: ${PRINTIFY_API_TOKEN:-}
       ZENDROP_API_KEY: ${ZENDROP_API_KEY:-}
+      ALIEXPRESS_APP_KEY: ${ALIEXPRESS_APP_KEY:-}
+      ALIEXPRESS_APP_SECRET: ${ALIEXPRESS_APP_SECRET:-}
+      ALIEXPRESS_TRACKING_ID: ${ALIEXPRESS_TRACKING_ID:-}
     volumes:
       - hermes_data:/data       # persists state.json across rebuilds
 

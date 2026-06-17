@@ -356,10 +356,13 @@ const HermesBridge = {
     return this.api('/printify/delist', { shopId, productId });
   },
 
-  // --- Zendrop ---
-  async getZendropStatus() {
-    return this.connected ? this.api('/zendrop/status') : {
-      provider: 'Zendrop', configured: false, maskedKey: null,
+  // --- Dropship suppliers (Zendrop, AliExpress) — one set of methods, keyed by
+  //     supplier id. Routes are /api/dropship/:supplier/* ---
+  async getSupplierStatus(id) {
+    if (this.connected) return this.api(`/dropship/${id}/status`);
+    const names = { zendrop: 'Zendrop', aliexpress: 'AliExpress' };
+    return {
+      id, provider: names[id] ?? id, configured: false, maskedKey: null,
       storedIn: 'Start the agent — key lives in HermesAgent/.env', products: 0, imported: 0, openOrders: 0,
       channels: [
         { id: 'tiktok', name: 'TikTok Shop', icon: '🛍️' },
@@ -371,26 +374,26 @@ const HermesBridge = {
     };
   },
   // Live-aware catalog payload: { live, source, products }.
-  async getZendropProducts() {
-    return this.connected ? this.api('/zendrop/products') : { live: false, source: 'agent offline', products: [] };
+  async getSupplierProducts(id) {
+    return this.connected ? this.api(`/dropship/${id}/products`) : { live: false, source: 'agent offline', products: [] };
+  },
+  async getSupplierOrders(id) { return this.connected ? this.api(`/dropship/${id}/orders`) : []; },
+  async getSupplierKey(id) {
+    if (!this.connected) throw new Error('Agent offline — key is in HermesAgent/.env');
+    return (await this.api(`/dropship/${id}/key`)).key;
+  },
+  async verifySupplier(id) {
+    if (!this.connected) return { ok: false, detail: 'Agent offline.' };
+    return this.api(`/dropship/${id}/verify`);
   },
   // List / remove a product across marketplace channels (channel id or 'all').
-  async listZendropChannel(productId, channel) {
+  async listChannel(id, productId, channel) {
     if (!this.connected) throw new Error('Agent offline.');
-    return this.api('/zendrop/list', { productId, channel });
+    return this.api(`/dropship/${id}/list`, { productId, channel });
   },
-  async unlistZendropChannel(productId, channel) {
+  async unlistChannel(id, productId, channel) {
     if (!this.connected) throw new Error('Agent offline.');
-    return this.api('/zendrop/unlist', { productId, channel });
-  },
-  async getZendropOrders() { return this.connected ? this.api('/zendrop/orders') : []; },
-  async getZendropKey() {
-    if (!this.connected) throw new Error('Agent offline — key is in HermesAgent/.env');
-    return (await this.api('/zendrop/key')).key;
-  },
-  async verifyZendrop() {
-    if (!this.connected) return { ok: false, detail: 'Agent offline.' };
-    return this.api('/zendrop/verify');
+    return this.api(`/dropship/${id}/unlist`, { productId, channel });
   },
 
   /* Talk to the Hermes agent. Offline fallback explains how to start it. */

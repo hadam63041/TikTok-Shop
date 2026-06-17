@@ -2,19 +2,26 @@
    All data comes through HermesBridge (data.js). */
 
 const state = {
-  primary: 'finance',          // finance | research | printify | fiverr | zendrop
+  primary: 'finance',          // finance | research | printify | fiverr | zendrop | aliexpress
   financeTab: 'overall',       // 'overall' or a business id
   etsyTab: null,               // design product type, set after load
   fiverrTab: null,             // gig category, set after load
   printifySub: 'catalog',      // catalog | mockup | designs
   mockup: { blueprintId: null, designUrl: '', scale: 42, posY: 38 }, // mockup studio state
-  zendropTab: 'connection',    // connection | products | orders
-  zendropKeyRevealed: null,    // full key once user clicks reveal
+  supplierTab: { zendrop: 'connection', aliexpress: 'connection' }, // per-supplier sub-tab
+  supplierKeyRevealed: {},     // supplierId -> full key once user clicks reveal
+  supplierVerify: {},          // supplierId -> live-check result
   expandedMetric: null,        // which finance KPI drawer is open
   expandedCompetitors: {},     // trendId -> bool
   modelsOpen: false,           // global AI-models panel
   sidebarExpanded: true,       // left agent menu expanded vs collapsed rail
 };
+
+// Dropship suppliers that get their own primary tab (same UI, shared code).
+const SUPPLIERS = [
+  { id: 'zendrop', name: 'Zendrop', icon: '📦' },
+  { id: 'aliexpress', name: 'AliExpress', icon: '🛒' },
+];
 
 const cache = {};              // bridge results, fetched once at boot
 
@@ -52,16 +59,23 @@ async function boot() {
   for (const category of cache.fiverrCategories) {
     cache.gigs[category] = await HermesBridge.getFiverrGigs(category);
   }
-  [cache.researchSources, cache.researchMeta, cache.serpFeeds, cache.printifyStatus,
-   cache.zendropStatus, cache.zendropProducts, cache.zendropOrders] = await Promise.all([
+  [cache.researchSources, cache.researchMeta, cache.serpFeeds, cache.printifyStatus] = await Promise.all([
     HermesBridge.getResearchSources(),
     HermesBridge.getResearchMeta(),
     HermesBridge.getSerpFeeds(),
     HermesBridge.getPrintifyStatus(),
-    HermesBridge.getZendropStatus(),
-    HermesBridge.getZendropProducts(),
-    HermesBridge.getZendropOrders(),
   ]);
+  // Dropship suppliers (Zendrop, AliExpress) — load each supplier's status,
+  // catalog and orders into cache.supplier[id].
+  cache.supplier = {};
+  await Promise.all(SUPPLIERS.map(async (s) => {
+    const [status, products, orders] = await Promise.all([
+      HermesBridge.getSupplierStatus(s.id),
+      HermesBridge.getSupplierProducts(s.id),
+      HermesBridge.getSupplierOrders(s.id),
+    ]);
+    cache.supplier[s.id] = { status, products, orders };
+  }));
   cache.designLibrary = await HermesBridge.getDesigns();
   cache.agents = await HermesBridge.getAgents();
   state.etsyTab = cache.productTypes[0];
@@ -81,7 +95,8 @@ function render() {
   document.querySelectorAll('.primary-tab').forEach((tab) =>
     tab.classList.toggle('active', tab.dataset.tab === state.primary));
   const view = { finance: renderFinance, research: renderResearch,
-                 printify: renderPrintify, fiverr: renderFiverr, zendrop: renderZendrop }[state.primary];
+                 printify: renderPrintify, fiverr: renderFiverr,
+                 zendrop: () => renderSupplier('zendrop'), aliexpress: () => renderSupplier('aliexpress') }[state.primary];
   $('#content').innerHTML = view();
   renderSidebar();
 }
@@ -91,18 +106,18 @@ function setFinanceTab(id) { state.financeTab = id; state.expandedMetric = null;
 function setEtsyTab(type) { state.etsyTab = type; render(); window.scrollTo(0, 0); }
 function setPrintifySub(sub) { state.printifySub = sub; render(); window.scrollTo(0, 0); }
 function setFiverrTab(category) { state.fiverrTab = category; render(); window.scrollTo(0, 0); }
-function setZendropTab(tab) { state.zendropTab = tab; render(); window.scrollTo(0, 0); }
+function setSupplierTab(id, tab) { state.supplierTab[id] = tab; render(); window.scrollTo(0, 0); }
 
-async function revealZendropKey() {
-  try { state.zendropKeyRevealed = await HermesBridge.getZendropKey(); }
-  catch (err) { state.zendropKeyRevealed = `(${err.message})`; }
+async function revealSupplierKey(id) {
+  try { state.supplierKeyRevealed[id] = await HermesBridge.getSupplierKey(id); }
+  catch (err) { state.supplierKeyRevealed[id] = `(${err.message})`; }
   render();
 }
 
-async function verifyZendropLive() {
-  state.zendropVerify = { detail: 'Checking…' };
+async function verifySupplierLive(id) {
+  state.supplierVerify[id] = { detail: 'Checking…' };
   render();
-  state.zendropVerify = await HermesBridge.verifyZendrop();
+  state.supplierVerify[id] = await HermesBridge.verifySupplier(id);
   render();
 }
 
@@ -1436,35 +1451,40 @@ function gigCard(gig) {
 
 /* ---------------- ZenDrop view ---------------- */
 
-function renderZendrop() {
-  const channels = cache.zendropStatus?.channels ?? [];
+/* A dropship supplier tab (Zendrop, AliExpress). Same UI for every supplier;
+   `id` selects which catalog/orders/status it renders from cache.supplier[id]. */
+function renderSupplier(id) {
+  const channels = cache.supplier[id]?.status?.channels ?? [];
+  const tab = state.supplierTab[id] ?? 'connection';
   const tabs = [
     { id: 'connection', label: '🔌 Connection' },
     { id: 'products', label: '📦 Products' },
     { id: 'orders', label: '🚚 Orders' },
     ...channels.map((c) => ({ id: 'ch:' + c.id, label: `${c.icon} ${c.name}` })),
   ];
-  const body = state.zendropTab.startsWith('ch:')
-    ? zendropChannelView(state.zendropTab.slice(3))
-    : ({ connection: zendropConnection, products: zendropProducts, orders: zendropOrders }[state.zendropTab] ?? zendropConnection)();
+  const body = tab.startsWith('ch:')
+    ? supplierChannelView(id, tab.slice(3))
+    : ({ connection: supplierConnection, products: supplierProducts, orders: supplierOrders }[tab] ?? supplierConnection)(id);
 
   return `
     <div class="secondary-tabs">
       ${tabs.map((t) => `
-        <button class="secondary-tab ${state.zendropTab === t.id ? 'active' : ''}"
-                onclick="setZendropTab('${t.id}')">${t.label}</button>`).join('')}
+        <button class="secondary-tab ${tab === t.id ? 'active' : ''}"
+                onclick="setSupplierTab('${id}','${t.id}')">${t.label}</button>`).join('')}
     </div>
     ${body}`;
 }
 
-function zendropConnection() {
-  const s = cache.zendropStatus ?? {};
-  const v = state.zendropVerify;
+function supplierConnection(id) {
+  const s = cache.supplier[id]?.status ?? {};
+  const sname = s.provider ?? id;
+  const v = state.supplierVerify[id];
+  const revealed = state.supplierKeyRevealed[id];
   return `
     <div class="kpi-grid">
       <div class="card kpi"><div class="label">Status</div>
         <div class="value" style="font-size:20px">${s.configured ? '🟢 Configured' : '🔴 No key'}</div>
-        <div class="hint">${s.provider} dropshipping API</div></div>
+        <div class="hint">${escapeHtml(sname)} dropshipping API</div></div>
       <div class="card kpi"><div class="label">Catalog</div>
         <div class="value">${s.products ?? 0}</div>
         <div class="hint">${s.imported ?? 0} imported to stores</div></div>
@@ -1474,48 +1494,49 @@ function zendropConnection() {
     </div>
 
     <div class="card section-gap">
-      <div class="panel-title">API credential</div>
+      <div class="panel-title">API credential${(s.envKeys ?? []).length ? ` <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">— ${s.envKeys.map(escapeHtml).join(', ')}</span>` : ''}</div>
       <div class="cred-row">
-        <span class="muted">Token</span>
-        <code class="cred-value">${state.zendropKeyRevealed ?? s.maskedKey ?? '—'}</code>
-        ${state.zendropKeyRevealed
-          ? `<button class="link-toggle linked" onclick="navigator.clipboard.writeText(state.zendropKeyRevealed); this.textContent='Copied ✓'">Copy</button>`
-          : `<button class="link-toggle" onclick="revealZendropKey()">Reveal API code</button>`}
+        <span class="muted">Key</span>
+        <code class="cred-value">${escapeHtml(revealed ?? s.maskedKey ?? '—')}</code>
+        ${revealed
+          ? `<button class="link-toggle linked" onclick="navigator.clipboard.writeText(state.supplierKeyRevealed['${id}']); this.textContent='Copied ✓'">Copy</button>`
+          : `<button class="link-toggle" onclick="revealSupplierKey('${id}')">Reveal API code</button>`}
       </div>
       <div class="cred-note">
-        🔒 Stored in <code>${s.storedIn ?? 'HermesAgent/.env'}</code>.
-        The full token is never baked into the dashboard's source — it's fetched from your
+        🔒 Stored in <code>${escapeHtml(s.storedIn ?? 'HermesAgent/.env')}</code>.
+        The full key is never baked into the dashboard's source — it's fetched from your
         local agent only when you click Reveal.
       </div>
     </div>
 
     <div class="card section-gap">
       <div class="panel-title">Live API check</div>
-      <button class="competitor-toggle" onclick="verifyZendropLive()">Test Zendrop endpoint ▸</button>
+      <button class="competitor-toggle" onclick="verifySupplierLive('${id}')">Test ${escapeHtml(sname)} endpoint ▸</button>
       ${v ? `<div class="verify-result ${v.ok ? 'ok' : 'warn'}">
-        ${v.ok ? '✅' : '⚠️'} ${v.detail}${v.httpStatus ? ` (HTTP ${v.httpStatus}, ${v.contentType})` : ''}
+        ${v.ok ? '✅' : '⚠️'} ${escapeHtml(v.detail)}${v.httpStatus ? ` (HTTP ${v.httpStatus}, ${escapeHtml(v.contentType || '')})` : ''}
       </div>` : ''}
     </div>`;
 }
 
-function zendropProducts() {
-  const payload = cache.zendropProducts ?? { products: [], live: false, source: '' };
+function supplierProducts(id) {
+  const payload = cache.supplier[id]?.products ?? { products: [], live: false, source: '' };
   const products = payload.products ?? [];
-  const channels = cache.zendropStatus?.channels ?? [];
+  const channels = cache.supplier[id]?.status?.channels ?? [];
+  const sname = cache.supplier[id]?.status?.provider ?? id;
   return `
     <div class="card section-gap source-strip">
-      <span class="panel-title" style="margin:0">Zendrop catalog</span>
+      <span class="panel-title" style="margin:0">${escapeHtml(sname)} catalog</span>
       <span class="provenance ${payload.live ? 'live' : 'sample'}">${payload.live ? '● LIVE' : '○ SAMPLE'}</span>
       <span class="muted">${escapeHtml(payload.source || '')}</span>
       <span class="muted" style="margin-left:auto">${products.length} products · list to ${channels.length} marketplaces</span>
     </div>
     ${products.length ? `
       <div class="design-grid">
-        ${products.map((p) => zendropProductCard(p, channels)).join('')}
+        ${products.map((p) => supplierProductCard(id, p, channels)).join('')}
       </div>` : `<div class="card"><span class="muted">No products. ${HermesBridge.connected ? '' : 'Start the agent to load the catalog.'}</span></div>`}`;
 }
 
-function zendropProductCard(p, channels) {
+function supplierProductCard(id, p, channels) {
   const margin = p.marginPct ?? (p.retail ? Math.round((1 - p.cost / p.retail) * 100) : 0);
   const listed = new Set(p.channels ?? []);
   const ship = (p.shipping ?? []).map((s) =>
@@ -1536,12 +1557,12 @@ function zendropProductCard(p, channels) {
         <div class="zd-channels">
           ${channels.map((c) => `
             <button class="zd-channel-chip ${listed.has(c.id) ? 'on' : ''}"
-                    onclick="toggleChannelListing('${p.id}','${c.id}')"
+                    onclick="toggleChannelListing('${id}','${p.id}','${c.id}')"
                     title="${listed.has(c.id) ? 'Listed — click to remove' : 'List to ' + escapeHtml(c.name)}">
               ${c.icon} ${escapeHtml(c.name)} ${listed.has(c.id) ? '✓' : '+'}
             </button>`).join('')}
         </div>
-        <button class="link-toggle linked" style="width:100%;margin-top:10px" onclick="listToAllChannels('${p.id}')">📣 List to all sites</button>
+        <button class="link-toggle linked" style="width:100%;margin-top:10px" onclick="listToAllChannels('${id}','${p.id}')">📣 List to all sites</button>
         <div class="muted" style="font-size:10.5px;margin-top:6px;line-height:1.4">
           Listing queues a draft — connect each marketplace's API to publish live.
         </div>
@@ -1550,16 +1571,17 @@ function zendropProductCard(p, channels) {
 }
 
 /* Per-channel tab: connection status + the products listed to that channel. */
-function zendropChannelView(channelId) {
-  const channels = cache.zendropStatus?.channels ?? [];
+function supplierChannelView(id, channelId) {
+  const channels = cache.supplier[id]?.status?.channels ?? [];
   const ch = channels.find((c) => c.id === channelId) ?? { id: channelId, name: channelId, icon: '🛒' };
-  const products = (cache.zendropProducts?.products ?? []).filter((p) => (p.channels ?? []).includes(channelId));
+  const sname = cache.supplier[id]?.status?.provider ?? id;
+  const products = (cache.supplier[id]?.products?.products ?? []).filter((p) => (p.channels ?? []).includes(channelId));
   const catalogValue = products.reduce((s, p) => s + (p.retail || 0), 0);
   return `
     <div class="kpi-grid">
       <div class="card kpi"><div class="label">Channel</div>
         <div class="value" style="font-size:20px">${ch.icon} ${escapeHtml(ch.name)}</div>
-        <div class="hint">sales channel</div></div>
+        <div class="hint">${escapeHtml(sname)} → sales channel</div></div>
       <div class="card kpi"><div class="label">Connection</div>
         <div class="value" style="font-size:20px">🔴 Not connected</div>
         <div class="hint">${escapeHtml(ch.name)} listing API pending</div></div>
@@ -1577,15 +1599,15 @@ function zendropChannelView(channelId) {
       </div>
     </div>
 
-    <div class="panel-title">Products listed to ${escapeHtml(ch.name)}</div>
+    <div class="panel-title">${escapeHtml(sname)} products listed to ${escapeHtml(ch.name)}</div>
     ${products.length ? `
       <div class="design-grid">
-        ${products.map((p) => zendropChannelProductCard(p, ch)).join('')}
+        ${products.map((p) => supplierChannelProductCard(id, p, ch)).join('')}
       </div>` : `
       <div class="card"><span class="muted">No products listed to ${escapeHtml(ch.name)} yet. Go to 📦 Products and click "${escapeHtml(ch.name)}" or "List to all sites".</span></div>`}`;
 }
 
-function zendropChannelProductCard(p, ch) {
+function supplierChannelProductCard(id, p, ch) {
   const margin = p.marginPct ?? (p.retail ? Math.round((1 - p.cost / p.retail) * 100) : 0);
   const cheapest = (p.shipping ?? []).reduce((m, s) => (m == null || s.cost < m.cost ? s : m), null);
   return `
@@ -1603,37 +1625,38 @@ function zendropChannelProductCard(p, ch) {
         </div>
         ${cheapest ? `<div class="zd-ship-opt" style="margin:2px 0 8px">🚚 from <b>${cheapest.cost ? money(cheapest.cost, 2) : 'Free'}</b> · ${escapeHtml(String(cheapest.days))} days</div>` : ''}
         <div class="design-actions">
-          <button class="danger" onclick="toggleChannelListing('${p.id}','${ch.id}')">⊘ Remove from ${escapeHtml(ch.name)}</button>
+          <button class="danger" onclick="toggleChannelListing('${id}','${p.id}','${ch.id}')">⊘ Remove from ${escapeHtml(ch.name)}</button>
         </div>
       </div>
     </div>`;
 }
 
 /* List / unlist a product on one channel (toggles), or list to all. */
-async function toggleChannelListing(productId, channelId) {
-  const p = (cache.zendropProducts?.products ?? []).find((x) => x.id === productId);
+async function toggleChannelListing(id, productId, channelId) {
+  const p = (cache.supplier[id]?.products?.products ?? []).find((x) => x.id === productId);
   const isListed = (p?.channels ?? []).includes(channelId);
   try {
-    if (isListed) await HermesBridge.unlistZendropChannel(productId, channelId);
-    else await HermesBridge.listZendropChannel(productId, channelId);
-    cache.zendropProducts = await HermesBridge.getZendropProducts();
+    if (isListed) await HermesBridge.unlistChannel(id, productId, channelId);
+    else await HermesBridge.listChannel(id, productId, channelId);
+    cache.supplier[id].products = await HermesBridge.getSupplierProducts(id);
     render();
   } catch (err) { alert('Listing failed: ' + err.message); }
 }
 
-async function listToAllChannels(productId) {
+async function listToAllChannels(id, productId) {
   try {
-    await HermesBridge.listZendropChannel(productId, 'all');
-    cache.zendropProducts = await HermesBridge.getZendropProducts();
+    await HermesBridge.listChannel(id, productId, 'all');
+    cache.supplier[id].products = await HermesBridge.getSupplierProducts(id);
     render();
   } catch (err) { alert('Listing failed: ' + err.message); }
 }
 
-function zendropOrders() {
-  const orders = cache.zendropOrders ?? [];
+function supplierOrders(id) {
+  const orders = cache.supplier[id]?.orders ?? [];
+  const sname = cache.supplier[id]?.status?.provider ?? id;
   const statusClass = (s) => s.startsWith('Delivered') ? 'listed' : s.startsWith('Shipped') ? 'printify' : s.startsWith('Draft') ? 'offline' : 'review';
   return `
-    <div class="panel-title">Zendrop fulfillment orders</div>
+    <div class="panel-title">${escapeHtml(sname)} fulfillment orders</div>
     <div class="card">
       ${financeTable(
         ['Order', 'Product', 'Qty', 'Customer', 'Status', 'Tracking', 'Revenue', 'Profit'],

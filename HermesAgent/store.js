@@ -168,6 +168,37 @@ function seed() {
       ],
     },
 
+    // AliExpress dropshipping supplier — same shape as zendrop (products carry
+    // cost/retail/shipping/channels; orders carry revenue/cost). Connected via
+    // the AliExpress Open Platform (ALIEXPRESS_APP_KEY/SECRET) — see dropship.js.
+    aliexpress: {
+      products: [
+        { id: "ax1", name: "Wireless Earbuds Pro (ANC)", emoji: "🎧", category: "Electronics", cost: 6.20, retail: 27.99, shipDays: "12–20", orders30d: 176, imported: false, store: null,
+          channels: [],
+          shipping: [ { method: "AliExpress Saver", days: "15–30", cost: 0 }, { method: "AliExpress Standard", days: "10–20", cost: 2.99 }, { method: "Premium (DHL)", days: "5–9", cost: 9.99 } ] },
+        { id: "ax2", name: "Phone Tripod + Ring Light", emoji: "💡", category: "Accessories", cost: 4.80, retail: 21.99, shipDays: "10–18", orders30d: 121, imported: false, store: null,
+          channels: [],
+          shipping: [ { method: "AliExpress Saver", days: "15–28", cost: 0 }, { method: "AliExpress Standard", days: "9–18", cost: 2.49 } ] },
+        { id: "ax3", name: "Smart LED Strip Lights 5m", emoji: "🪅", category: "Home", cost: 3.90, retail: 18.99, shipDays: "12–22", orders30d: 264, imported: false, store: null,
+          channels: [],
+          shipping: [ { method: "AliExpress Saver", days: "15–30", cost: 0 }, { method: "AliExpress Standard", days: "10–20", cost: 1.99 } ] },
+        { id: "ax4", name: "Insulated Steel Bottle 1L", emoji: "🍶", category: "Outdoors", cost: 5.10, retail: 22.99, shipDays: "11–19", orders30d: 88, imported: false, store: null,
+          channels: [],
+          shipping: [ { method: "AliExpress Saver", days: "14–28", cost: 0 }, { method: "AliExpress Standard", days: "9–17", cost: 3.49 } ] },
+        { id: "ax5", name: "Reusable Magnetic Lashes Kit", emoji: "👁️", category: "Beauty", cost: 2.40, retail: 16.99, shipDays: "10–18", orders30d: 142, imported: false, store: null,
+          channels: [],
+          shipping: [ { method: "AliExpress Saver", days: "14–26", cost: 0 }, { method: "AliExpress Standard", days: "8–16", cost: 1.49 } ] },
+        { id: "ax6", name: "Gravity Car Phone Holder", emoji: "🚗", category: "Automotive", cost: 3.30, retail: 15.99, shipDays: "12–20", orders30d: 73, imported: false, store: null,
+          channels: [],
+          shipping: [ { method: "AliExpress Saver", days: "15–30", cost: 0 }, { method: "AliExpress Standard", days: "10–19", cost: 2.29 } ] },
+      ],
+      orders: [
+        { id: "AE-20471", product: "Smart LED Strip Lights 5m", qty: 1, customer: "J. Park", status: "Shipped", tracking: "AE739201CN", revenue: 18.99, cost: 3.90, placedAt: "2026-06-08" },
+        { id: "AE-20468", product: "Wireless Earbuds Pro (ANC)", qty: 2, customer: "L. Costa", status: "Delivered", tracking: "AE738455CN", revenue: 55.98, cost: 12.40, placedAt: "2026-06-03" },
+        { id: "AE-20480", product: "Reusable Magnetic Lashes Kit", qty: 1, customer: "D. Nguyen", status: "Processing", tracking: null, revenue: 16.99, cost: 2.40, placedAt: "2026-06-13" },
+      ],
+    },
+
     // Per-unit retail prices the user sets for Printify catalog products
     // (keyed by blueprintId). Printify's catalog API doesn't expose base cost.
     printifyPricing: {},
@@ -200,16 +231,18 @@ for (const key of Object.keys(defaults)) {
   if (loaded[key] === undefined) { loaded[key] = defaults[key]; backfilled = true; }
 }
 
-// Nested backfill: older state.json Zendrop products predate per-product
+// Nested backfill: older state.json supplier products predate per-product
 // shipping options and marketplace channel listings — add them in place.
-for (const p of loaded.zendrop?.products ?? []) {
-  if (!Array.isArray(p.channels)) { p.channels = []; backfilled = true; }
-  if (!Array.isArray(p.shipping)) {
-    p.shipping = [
-      { method: "Standard", days: p.shipDays || "8–14", cost: 0 },
-      { method: "Express", days: "5–8", cost: 4.99 },
-    ];
-    backfilled = true;
+for (const supplierId of ["zendrop", "aliexpress"]) {
+  for (const p of loaded[supplierId]?.products ?? []) {
+    if (!Array.isArray(p.channels)) { p.channels = []; backfilled = true; }
+    if (!Array.isArray(p.shipping)) {
+      p.shipping = [
+        { method: "Standard", days: p.shipDays || "8–14", cost: 0 },
+        { method: "Express", days: "5–8", cost: 4.99 },
+      ];
+      backfilled = true;
+    }
   }
 }
 

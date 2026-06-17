@@ -33,7 +33,8 @@ const { printifyStatus, printifyShops, printifyProducts, printifyConfigured,
         printifyDelist, printifyListingFacts } = await import("./printify.js");
 const { generateListingCopy } = await import("./describe.js");
 const { handleMcpRpc } = await import("./mcp.js");
-const { CHANNELS, zendropProductsPayload, listProductToChannels, unlistProductFromChannel, channelName } = await import("./zendrop.js");
+const { supplierStatus, supplierProductsPayload, supplierOrders, supplierKey, supplierVerify,
+        listProductToChannels, unlistProductFromChannel, channelName } = await import("./dropship.js");
 const roster = createRoster();
 const agent = roster.get("hermes"); // back-compat: /api/agent/* talks to the orchestrator
 
@@ -185,57 +186,8 @@ const routes = {
     return mockup;
   },
 
-  // --- Zendrop ---
-  "GET /api/zendrop/status": () => {
-    const key = process.env.ZENDROP_API_KEY || "";
-    return {
-      provider: "Zendrop",
-      configured: Boolean(key),
-      maskedKey: key ? `${key.slice(0, 4)}${"•".repeat(8)}${key.slice(-4)}` : null,
-      storedIn: "HermesAgent/.env (server-side; never sent to the browser by default)",
-      products: state.zendrop.products.length,
-      imported: state.zendrop.products.filter((p) => p.imported).length,
-      openOrders: state.zendrop.orders.filter((o) => o.status.startsWith("Processing") || o.status.startsWith("Draft")).length,
-      channels: CHANNELS, // sales channels products can be listed to
-    };
-  },
-  // Live-aware catalog: { live, source, products } (products carry cost,
-  // shipping options, margin and the channels they're listed to).
-  "GET /api/zendrop/products": () => zendropProductsPayload(),
-  // List / unlist a product across marketplace channels (drafts).
-  "POST /api/zendrop/list": (q, body) => {
-    const { product, added } = listProductToChannels(body.productId, body.channel ?? body.channels);
-    return { product, added, channels: added.map(channelName) };
-  },
-  "POST /api/zendrop/unlist": (q, body) => {
-    const { product, removed } = unlistProductFromChannel(body.productId, body.channel);
-    return { product, removed };
-  },
-  "GET /api/zendrop/orders": () => state.zendrop.orders.map((o) => ({ ...o, profit: Number((o.revenue - o.cost).toFixed(2)) })),
-  // Localhost convenience: reveal the full key on explicit request. The key
-  // otherwise lives only in .env / process.env and is masked everywhere else.
-  "GET /api/zendrop/key": () => ({ key: process.env.ZENDROP_API_KEY || null }),
-  // Honest live check — reports exactly what Zendrop's endpoint returns.
-  "GET /api/zendrop/verify": async () => {
-    const key = process.env.ZENDROP_API_KEY;
-    if (!key) return { ok: false, detail: "No ZENDROP_API_KEY set." };
-    try {
-      const res = await fetch("https://api.zendrop.com/v1/products?limit=1", {
-        headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
-        signal: AbortSignal.timeout(10000),
-      });
-      const ct = res.headers.get("content-type") || "";
-      const isJson = ct.includes("application/json");
-      return {
-        ok: isJson, httpStatus: res.status, contentType: ct,
-        detail: isJson
-          ? "Endpoint returned JSON — live API reachable."
-          : "Endpoint returned HTML, not JSON. Zendrop's public REST base is unconfirmed; wire the documented partner API base into connectors.js once known.",
-      };
-    } catch (err) {
-      return { ok: false, detail: `Request failed: ${err.message}` };
-    }
-  },
+  // --- Dropship suppliers (Zendrop, AliExpress) ---
+  // Served by parameterized routes /api/dropship/:supplier/* in dynamicRoute().
 
   // Feed an API key at runtime: {"key": "ETSY_API_KEY", "value": "..."}
   "POST /api/keys": (q, body) => {
@@ -258,7 +210,28 @@ const routes = {
 
 // Parameterized routes
 function dynamicRoute(method, urlPath, body) {
-  let match = urlPath.match(/^\/api\/models\/([\w-]+)\/link$/);
+  // Dropship suppliers (Zendrop, AliExpress): catalog, orders, key, verify, listing.
+  let match = urlPath.match(/^\/api\/dropship\/([\w-]+)\/(status|products|orders|key|verify)$/);
+  if (method === "GET" && match) {
+    const id = match[1];
+    if (match[2] === "status") return supplierStatus(id);
+    if (match[2] === "products") return supplierProductsPayload(id); // async
+    if (match[2] === "orders") return supplierOrders(id);
+    if (match[2] === "key") return { key: supplierKey(id) };
+    return supplierVerify(id); // async
+  }
+  match = urlPath.match(/^\/api\/dropship\/([\w-]+)\/(list|unlist)$/);
+  if (method === "POST" && match) {
+    const id = match[1];
+    if (match[2] === "list") {
+      const { product, added } = listProductToChannels(id, body.productId, body.channel ?? body.channels);
+      return { product, added, channels: added.map(channelName) };
+    }
+    const { product, removed } = unlistProductFromChannel(id, body.productId, body.channel);
+    return { product, removed };
+  }
+
+  match = urlPath.match(/^\/api\/models\/([\w-]+)\/link$/);
   if (method === "POST" && match) {
     const model = state.aiModels.find((m) => m.id === match[1]);
     if (!model) throw new Error(`unknown model ${match[1]}`);

@@ -84,7 +84,7 @@ export const AGENT_SPECS = [
   {
     id: "operations", name: "Operations", icon: "🚀", color: "#00ff9f",
     blurb: "Publishing & fulfillment",
-    tools: ["printify_list_shops", "printify_list_products", "printify_list_to_etsy", "printify_sync_design", "etsy_publish_design", "import_design", "zendrop_import_product", "zendrop_draft_fulfillment", "fiverr_deliver_gig"],
+    tools: ["printify_list_shops", "printify_list_products", "printify_list_to_etsy", "printify_sync_design", "etsy_publish_design", "import_design", "zendrop_import_product", "zendrop_draft_fulfillment", "zendrop_list_to_channels", "aliexpress_import_product", "aliexpress_draft_fulfillment", "aliexpress_list_to_channels", "fiverr_deliver_gig"],
     prompt:
       "upload APPROVED designs to the marketplaces (Etsy via Printify, etc.) and handle fulfillment drafts. " +
       "Listing/publishing is customer-visible and creates real, live products — always confirm the exact product, " +
@@ -93,7 +93,7 @@ export const AGENT_SPECS = [
   {
     id: "revision", name: "Revision", icon: "📊", color: "#fcee0a",
     blurb: "Performance review",
-    tools: ["get_dashboard_snapshot", "get_trend_competitors", "printify_list_products", "fiverr_list_gigs", "zendrop_list_orders", "etsy_list_designs", "get_discovery_feeds"],
+    tools: ["get_dashboard_snapshot", "get_trend_competitors", "printify_list_products", "fiverr_list_gigs", "zendrop_list_orders", "aliexpress_list_orders", "etsy_list_designs", "get_discovery_feeds"],
     prompt:
       "evaluate the success of EVERY product, marketing channel, marketplace and vendor. Rank winners and losers " +
       "with real numbers (revenue, margin, conversion proxies), and recommend concrete actions: cut, double-down, " +
@@ -102,7 +102,7 @@ export const AGENT_SPECS = [
   {
     id: "accountant", name: "Accountant", icon: "🧮", color: "#ff7a1a",
     blurb: "Profit, costs & expenses",
-    tools: ["get_dashboard_snapshot", "zendrop_list_orders"],
+    tools: ["get_dashboard_snapshot", "zendrop_list_orders", "aliexpress_list_orders"],
     prompt:
       "own the P&L. Track revenue and split costs into DIRECT (COGS, print/fulfillment, marketplace & payment fees, " +
       "shipping) and INDIRECT (ad spend, software/API subscriptions, LLM usage). Report profit and margin per " +

@@ -10,7 +10,7 @@
 import { state, persist, logActivity, findAsset } from "./store.js";
 import { fetchTrends, researchSources, getSerpFeeds } from "./research.js";
 import { printifyShops, printifyProducts, printifyConfigured, printifyListToEtsy } from "./printify.js";
-import { CHANNELS, listProductToChannels, channelName } from "./zendrop.js";
+import { CHANNELS, SUPPLIERS, listProductToChannels, channelName } from "./dropship.js";
 
 function requireModelLinked(name) {
   const model = state.aiModels.find((m) => m.name.toLowerCase().includes(name.toLowerCase()));
@@ -20,6 +20,84 @@ function requireModelLinked(name) {
 }
 
 const newId = (prefix) => prefix + Math.random().toString(36).slice(2, 7);
+
+// Build the connector for a dropship supplier (Zendrop, AliExpress…). Every
+// supplier exposes the same tool surface, parameterized by supplier id, so the
+// agent operates them identically. Tools are named `<id>_<verb>` (e.g.
+// zendrop_import_product, aliexpress_list_to_channels).
+function makeSupplierConnector(s) {
+  const sid = s.id, name = s.name;
+  const find = (pid) => state[sid].products.find((x) => x.id === pid);
+  const margin = (p) => (p.retail ? Math.round((1 - p.cost / p.retail) * 100) : 0);
+  return {
+    id: sid,
+    name: `${name} (dropshipping supplier & fulfillment)`,
+    envKeys: s.envKeys,
+    tools: [
+      {
+        name: `${sid}_list_products`,
+        description: `List ${name} catalog products available for sourcing, with cost, retail price, margin and shipping options. Use to find products to import or list.`,
+        input_schema: { type: "object", properties: { imported_only: { type: "boolean", description: "Only products already imported to a store" } }, required: [] },
+        async handler({ imported_only }) {
+          let products = state[sid].products;
+          if (imported_only) products = products.filter((p) => p.imported);
+          return JSON.stringify(products.map((p) => ({ ...p, marginPct: margin(p) })), null, 2);
+        },
+      },
+      {
+        name: `${sid}_import_product`,
+        description: `Import a ${name} product into one of your stores so it can be sold. No money is spent. Set the retail price.`,
+        input_schema: { type: "object", properties: { product_id: { type: "string" }, store: { type: "string", description: "Store name, e.g. PetGear Plus" }, retail: { type: "number", description: "Retail price USD" } }, required: ["product_id", "store"] },
+        async handler({ product_id, store, retail }) {
+          const p = find(product_id);
+          if (!p) throw new Error(`No ${name} product ${product_id}`);
+          // LIVE: POST the supplier's import endpoint { store, price }.
+          p.imported = true; p.store = store; if (retail != null) p.retail = retail;
+          persist();
+          return `Imported "${p.name}" to ${store} at $${p.retail} (cost $${p.cost}, margin ${margin(p)}%).`;
+        },
+      },
+      {
+        name: `${sid}_list_orders`,
+        description: `List ${name} fulfillment orders with status, tracking, and profit.`,
+        input_schema: { type: "object", properties: {}, required: [] },
+        async handler() {
+          return JSON.stringify(state[sid].orders.map((o) => ({ ...o, profit: Number((o.revenue - o.cost).toFixed(2)) })), null, 2);
+        },
+      },
+      {
+        name: `${sid}_draft_fulfillment`,
+        description: `Prepare (DRAFT, not submit) a ${name} fulfillment order. Spending money / placing the live order is left for the user to confirm and submit — this only drafts it.`,
+        input_schema: { type: "object", properties: { product_id: { type: "string" }, qty: { type: "integer" }, customer: { type: "string" } }, required: ["product_id", "qty"] },
+        async handler({ product_id, qty, customer = "—" }) {
+          const p = find(product_id);
+          if (!p) throw new Error(`No ${name} product ${product_id}`);
+          // NOTE: deliberately does NOT call a live order/payment endpoint.
+          const order = {
+            id: `${sid.slice(0, 2).toUpperCase()}-DRAFT-` + Math.random().toString(36).slice(2, 6).toUpperCase(),
+            product: p.name, qty, customer, status: "Draft (needs your confirmation)",
+            tracking: null, revenue: Number((p.retail * qty).toFixed(2)), cost: Number((p.cost * qty).toFixed(2)),
+            placedAt: new Date().toISOString().slice(0, 10),
+          };
+          state[sid].orders.unshift(order); persist();
+          return `Drafted order ${order.id}: ${qty}× ${p.name}. Cost $${order.cost}, revenue $${order.revenue}. NOT submitted — confirm and place it yourself in ${name}.`;
+        },
+      },
+      {
+        name: `${sid}_list_to_channels`,
+        description: `List a ${name} product to one or more sales channels (TikTok Shop, Facebook Marketplace, Etsy, Amazon, eBay) — pass channel ids or 'all'. QUEUES a draft listing per channel; does not publish live or spend money (each marketplace's API must be connected to publish). Safe to call.`,
+        input_schema: { type: "object", properties: { product_id: { type: "string", description: `${name} product id` }, channels: { type: "array", items: { type: "string", enum: [...CHANNELS.map((c) => c.id), "all"] }, description: "Channel ids (tiktok, facebook, etsy, amazon, ebay) or ['all']" } }, required: ["product_id", "channels"] },
+        async handler({ product_id, channels }) {
+          const { product, added } = listProductToChannels(sid, product_id, channels);
+          // LIVE: for each connected channel, POST the listing to its marketplace API.
+          return added.length
+            ? `Queued draft listings for "${product.name}" on: ${added.map(channelName).join(", ")}. Connect each marketplace's API to publish live.`
+            : `"${product.name}" was already listed on those channels.`;
+        },
+      },
+    ],
+  };
+}
 
 export const connectors = [
   {
@@ -268,115 +346,9 @@ export const connectors = [
       },
     ],
   },
-  {
-    id: "zendrop",
-    name: "Zendrop (dropshipping supplier & fulfillment)",
-    envKeys: ["ZENDROP_API_KEY"],
-    tools: [
-      {
-        name: "zendrop_list_products",
-        description: "List Zendrop catalog products available for sourcing, with cost, retail price, and margin. Use to find products to import into a store.",
-        input_schema: {
-          type: "object",
-          properties: { imported_only: { type: "boolean", description: "Only products already imported to a store" } },
-          required: [],
-        },
-        async handler({ imported_only }) {
-          // LIVE: GET {ZENDROP_API_BASE}/products  (header: Authorization: Bearer ZENDROP_API_KEY)
-          // Endpoint/auth unverified — Zendrop's public base returned HTML, not JSON.
-          let products = state.zendrop.products;
-          if (imported_only) products = products.filter((p) => p.imported);
-          return JSON.stringify(products.map((p) => ({
-            ...p, marginPct: Math.round((1 - p.cost / p.retail) * 100),
-          })), null, 2);
-        },
-      },
-      {
-        name: "zendrop_import_product",
-        description: "Import a Zendrop product into one of your stores so it can be sold. No money is spent. Set the retail price.",
-        input_schema: {
-          type: "object",
-          properties: {
-            product_id: { type: "string", description: "e.g. zd4" },
-            store: { type: "string", description: "Store name, e.g. PetGear Plus" },
-            retail: { type: "number", description: "Retail price USD" },
-          },
-          required: ["product_id", "store"],
-        },
-        async handler({ product_id, store, retail }) {
-          const p = state.zendrop.products.find((x) => x.id === product_id);
-          if (!p) throw new Error(`No Zendrop product ${product_id}`);
-          // LIVE: POST {ZENDROP_API_BASE}/products/{id}/import { store, price }
-          p.imported = true;
-          p.store = store;
-          if (retail != null) p.retail = retail;
-          persist();
-          return `Imported "${p.name}" to ${store} at $${p.retail} (cost $${p.cost}, margin ${Math.round((1 - p.cost / p.retail) * 100)}%).`;
-        },
-      },
-      {
-        name: "zendrop_list_orders",
-        description: "List Zendrop fulfillment orders with status, tracking, and profit.",
-        input_schema: { type: "object", properties: {}, required: [] },
-        async handler() {
-          return JSON.stringify(state.zendrop.orders.map((o) => ({
-            ...o, profit: Number((o.revenue - o.cost).toFixed(2)),
-          })), null, 2);
-        },
-      },
-      {
-        name: "zendrop_draft_fulfillment",
-        description: "Prepare (DRAFT, not submit) a Zendrop fulfillment order for a product. Spending money / placing the live order is left for the user to confirm and submit — this only drafts it.",
-        input_schema: {
-          type: "object",
-          properties: {
-            product_id: { type: "string" },
-            qty: { type: "integer" },
-            customer: { type: "string" },
-          },
-          required: ["product_id", "qty"],
-        },
-        async handler({ product_id, qty, customer = "—" }) {
-          const p = state.zendrop.products.find((x) => x.id === product_id);
-          if (!p) throw new Error(`No Zendrop product ${product_id}`);
-          // NOTE: deliberately does NOT call a live order/payment endpoint.
-          const order = {
-            id: "ZD-DRAFT-" + Math.random().toString(36).slice(2, 6).toUpperCase(),
-            product: p.name, qty, customer, status: "Draft (needs your confirmation)",
-            tracking: null, revenue: Number((p.retail * qty).toFixed(2)), cost: Number((p.cost * qty).toFixed(2)),
-            placedAt: new Date().toISOString().slice(0, 10),
-          };
-          state.zendrop.orders.unshift(order);
-          persist();
-          return `Drafted order ${order.id}: ${qty}× ${p.name}. Cost $${order.cost}, revenue $${order.revenue}. NOT submitted — confirm and place it yourself in Zendrop.`;
-        },
-      },
-      {
-        name: "list_product_to_channels",
-        description:
-          "List a Zendrop product to one or more sales channels (TikTok Shop, Facebook Marketplace, Etsy, Amazon, eBay) — pass channel ids or 'all'. This QUEUES a draft listing per channel; it does not publish live or spend money (each marketplace's listing API must be connected to actually publish). Safe to call.",
-        input_schema: {
-          type: "object",
-          properties: {
-            product_id: { type: "string", description: "Zendrop product id, e.g. zd4" },
-            channels: {
-              type: "array",
-              items: { type: "string", enum: [...CHANNELS.map((c) => c.id), "all"] },
-              description: "Channel ids (tiktok, facebook, etsy, amazon, ebay) or ['all']",
-            },
-          },
-          required: ["product_id", "channels"],
-        },
-        async handler({ product_id, channels }) {
-          const { product, added } = listProductToChannels(product_id, channels);
-          // LIVE: for each connected channel, POST the listing to its marketplace API.
-          return added.length
-            ? `Queued draft listings for "${product.name}" on: ${added.map(channelName).join(", ")}. Connect each marketplace's API to publish live.`
-            : `"${product.name}" was already listed on those channels.`;
-        },
-      },
-    ],
-  },
+  // Dropship suppliers (Zendrop, AliExpress) — one tool surface, generated per
+  // supplier from the registry in dropship.js.
+  ...SUPPLIERS.map(makeSupplierConnector),
   {
     id: "ads",
     name: "Ad platforms (Meta / Google / TikTok / Pinterest / Etsy Ads)",
