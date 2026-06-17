@@ -8,13 +8,14 @@ const state = {
   fiverrTab: null,             // gig category, set after load
   printifySub: 'catalog',      // catalog | mockup | designs
   mockup: { blueprintId: null, designUrl: '', scale: 42, posY: 38 }, // mockup studio state
-  supplierTab: { zendrop: 'connection', aliexpress: 'connection' }, // per-supplier sub-tab
+  supplierTab: { zendrop: 'connection', aliexpress: 'connection' }, // per-supplier sub-tab; aliexpress id now backs CJ Dropshipping
   supplierKeyRevealed: {},     // supplierId -> full key once user clicks reveal
   supplierVerify: {},          // supplierId -> live-check result
   channelKeyRevealed: {},      // channelId -> full key once user clicks reveal
   tiktokConnect: { busy: false, error: null, code: '' }, // TikTok Shop OAuth form
   expandedMetric: null,        // which finance KPI drawer is open
   expandedCompetitors: {},     // trendId -> bool
+  podBusy: false,              // weekly POD automation manual run/config update
   modelsOpen: false,           // global AI-models panel
   sidebarExpanded: true,       // left agent menu expanded vs collapsed rail
 };
@@ -22,7 +23,7 @@ const state = {
 // Dropship suppliers that get their own primary tab (same UI, shared code).
 const SUPPLIERS = [
   { id: 'zendrop', name: 'Zendrop', icon: '📦' },
-  { id: 'aliexpress', name: 'AliExpress', icon: '🛒' },
+  { id: 'aliexpress', name: 'CJ Dropshipping', icon: '🛒' },
 ];
 
 const cache = {};              // bridge results, fetched once at boot
@@ -61,10 +62,11 @@ async function boot() {
   for (const category of cache.fiverrCategories) {
     cache.gigs[category] = await HermesBridge.getFiverrGigs(category);
   }
-  [cache.researchSources, cache.researchMeta, cache.serpFeeds, cache.printifyStatus] = await Promise.all([
+  [cache.researchSources, cache.researchMeta, cache.serpFeeds, cache.podAutomation, cache.printifyStatus] = await Promise.all([
     HermesBridge.getResearchSources(),
     HermesBridge.getResearchMeta(),
     HermesBridge.getSerpFeeds(),
+    HermesBridge.getPodAutomation(),
     HermesBridge.getPrintifyStatus(),
   ]);
   // Dropship suppliers (Zendrop, AliExpress) — load each supplier's status,
@@ -459,10 +461,43 @@ async function refreshResearch() {
     cache.serpFeeds = serp;
     cache.researchMeta = await HermesBridge.getResearchMeta();
     cache.researchSources = await HermesBridge.getResearchSources();
+    cache.podAutomation = await HermesBridge.getPodAutomation();
   } catch (err) {
     cache.researchError = err.message;
   }
   state.researchBusy = false;
+  render();
+}
+
+async function updatePodAutomation(patch) {
+  if (state.podBusy) return;
+  state.podBusy = true;
+  render();
+  try {
+    cache.podAutomation = await HermesBridge.updatePodAutomationConfig(patch);
+    cache.researchError = null;
+  } catch (err) {
+    cache.researchError = err.message;
+  }
+  state.podBusy = false;
+  render();
+}
+
+async function runPodAutomationNow() {
+  if (state.podBusy) return;
+  state.podBusy = true;
+  render();
+  try {
+    await HermesBridge.runPodAutomation();
+    [cache.podAutomation, cache.designLibrary] = await Promise.all([
+      HermesBridge.getPodAutomation(),
+      HermesBridge.getDesigns(),
+    ]);
+    cache.researchError = null;
+  } catch (err) {
+    cache.researchError = err.message;
+  }
+  state.podBusy = false;
   render();
 }
 
@@ -692,6 +727,8 @@ function renderResearch() {
     ${cache.researchError ? `<div class="card detail-drawer" style="border-color:var(--red)">
       <span class="muted">Refresh error: ${cache.researchError}</span></div>` : ''}
 
+    ${podAutomationPanel()}
+
     <div class="panel-title">Linked businesses</div>
     <div class="biz-chips">
       ${cache.businesses.map((b) => `
@@ -710,6 +747,76 @@ function renderResearch() {
     </div>
 
     ${serpTrendSections()}`;
+}
+
+function podAutomationPanel() {
+  const pod = cache.podAutomation ?? {};
+  const cfg = pod.config ?? {};
+  const last = pod.lastRun;
+  const next = cfg.nextRunAt ? new Date(cfg.nextRunAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'not scheduled';
+  const opps = pod.opportunities ?? [];
+  const niches = pod.nicheResearch ?? [];
+  return `
+    <div class="card section-gap">
+      <div class="trend-head">
+        <div>
+          <div class="panel-title">Weekly POD automation</div>
+          <div class="muted" style="font-size:12px">
+            Researches events, shopping trends, holidays and niche spending; generates standalone white-background designs; converts the background so product colors show through; then ${cfg.autoPublish ? '<b>publishes live to Etsy</b>' : 'keeps a dry-run plan'}.
+          </div>
+        </div>
+        <span class="score-badge ${cfg.enabled ? '' : 'mid'}">${cfg.enabled ? 'ON' : 'OFF'}</span>
+      </div>
+      <div class="trend-metrics">
+        <div class="tm"><b>${cfg.intervalDays ?? 7}d</b>cadence</div>
+        <div class="tm"><b>${cfg.maxDesignsPerRun ?? 3}</b>designs / run</div>
+        <div class="tm"><b>${cfg.autoPublish ? 'LIVE' : 'DRY'}</b>Etsy publish</div>
+        <div class="tm"><b>${escapeHtml(next)}</b>next run</div>
+      </div>
+      <div class="zd-channels" style="margin-top:12px">
+        <button class="zd-channel-chip ${cfg.enabled ? 'on linked' : ''}" ${state.podBusy ? 'disabled' : ''} onclick="updatePodAutomation({ enabled: ${cfg.enabled ? 'false' : 'true'} })">
+          ${cfg.enabled ? '✓ Weekly automation enabled' : '+ Enable weekly automation'}
+        </button>
+        <button class="zd-channel-chip ${cfg.autoPublish ? 'on linked' : ''}" ${state.podBusy ? 'disabled' : ''} onclick="updatePodAutomation({ autoPublish: ${cfg.autoPublish ? 'false' : 'true'} })">
+          ${cfg.autoPublish ? '✓ Auto-publish to Etsy' : '+ Dry-run only'}
+        </button>
+        <button class="link-toggle linked" ${state.podBusy ? 'disabled' : ''} onclick="runPodAutomationNow()">
+          ${state.podBusy ? 'Running…' : 'Run now'}
+        </button>
+      </div>
+      ${cfg.autoPublish ? `<div class="verify-result warn" style="margin-top:10px">⚠️ Auto-publish is enabled. Scheduled runs can create customer-visible Etsy listings through Printify.</div>` : ''}
+      ${last ? `<div class="trend-note">
+        Last run: <b>${escapeHtml(last.status)}</b> · ${escapeHtml(timeAgo(last.finishedAt || last.startedAt))} ·
+        ${(last.decisions ?? []).length} design(s), ${(last.errors ?? []).length} error(s)
+      </div>` : `<div class="trend-note">No automation run has completed yet.</div>`}
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <div class="panel-title">Highest-spend niche groups</div>
+        ${niches.length ? financeTable(
+          ['Niche', 'Spend', 'Interests', 'Best products'],
+          niches.slice().sort((a, b) => b.spendIndex - a.spendIndex).slice(0, 6).map((n) => [
+            escapeHtml(n.name),
+            `${n.spendIndex}/100`,
+            escapeHtml((n.interests ?? []).join(', ')),
+            escapeHtml((n.products ?? []).join(', ')),
+          ]),
+          [1]) : `<span class="muted">Niche research loads from the agent.</span>`}
+      </div>
+      <div class="card">
+        <div class="panel-title">Current automation opportunities</div>
+        ${opps.length ? financeTable(
+          ['Opportunity', 'Type', 'Niche', 'Score'],
+          opps.slice(0, 8).map((o) => [
+            escapeHtml(o.title),
+            escapeHtml(o.type),
+            escapeHtml(o.niche?.name ?? '—'),
+            `<b>${o.score}</b>`,
+          ]),
+          [3]) : `<span class="muted">Run or refresh automation to score opportunities.</span>`}
+      </div>
+    </div>`;
 }
 
 /* ----- SerpApi discovery feeds: shopping / event / holiday trends ----- */

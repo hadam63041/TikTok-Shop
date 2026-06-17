@@ -21,7 +21,7 @@ function requireModelLinked(name) {
 
 const newId = (prefix) => prefix + Math.random().toString(36).slice(2, 7);
 
-// Build the connector for a dropship supplier (Zendrop, AliExpress…). Every
+// Build the connector for a dropship supplier (Zendrop, CJ Dropshipping…). Every
 // supplier exposes the same tool surface, parameterized by supplier id, so the
 // agent operates them identically. Tools are named `<id>_<verb>` (e.g.
 // zendrop_import_product, aliexpress_list_to_channels).
@@ -278,8 +278,8 @@ export const connectors = [
   },
   {
     id: "higgsfield",
-    name: "Higgsfield AI (video generation)",
-    envKeys: ["HIGGSFIELD_API_KEY"],
+    name: "Higgsfield AI (image/video generation)",
+    envKeys: ["HIGGSFIELD_CLI_PATH"],
     tools: [
       {
         name: "generate_video_ad",
@@ -346,7 +346,7 @@ export const connectors = [
       },
     ],
   },
-  // Dropship suppliers (Zendrop, AliExpress) — one tool surface, generated per
+  // Dropship suppliers (Zendrop, CJ Dropshipping) — one tool surface, generated per
   // supplier from the registry in dropship.js.
   ...SUPPLIERS.map(makeSupplierConnector),
   {

@@ -39,12 +39,14 @@ const { printifyStatus, printifyShops, printifyProducts, printifyConfigured,
         printifyDelist, printifyListingFacts } = await import("./printify.js");
 const { generateListingCopy } = await import("./describe.js");
 const { handleMcpRpc } = await import("./mcp.js");
+const { podAutomationStatus, updatePodAutomationConfig, runPodAutomation, startPodAutomationScheduler } = await import("./podAutomation.js");
 const { supplierStatus, supplierProductsPayload, supplierOrders, supplierKey, supplierVerify,
         listProductToChannels, unlistProductFromChannel, channelName, channelKey, getSupplierProduct } = await import("./dropship.js");
 const { tiktokAuthUrl, tiktokExchange, tiktokRefresh, tiktokDisconnect, tiktokFetchShops,
         tiktokConnection, tiktokPublishProduct } = await import("./tiktok.js");
 const roster = createRoster();
 const agent = roster.get("hermes"); // back-compat: /api/agent/* talks to the orchestrator
+startPodAutomationScheduler();
 
 // ----- helpers -----
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml" };
@@ -75,7 +77,10 @@ function serveStatic(req, res) {
   if (!file.startsWith(DASHBOARD_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.writeHead(404); res.end("not found"); return;
   }
-  res.writeHead(200, { "Content-Type": MIME[path.extname(file)] ?? "application/octet-stream" });
+  res.writeHead(200, {
+    "Content-Type": MIME[path.extname(file)] ?? "application/octet-stream",
+    "Cache-Control": "no-store, max-age=0",
+  });
   res.end(fs.readFileSync(file));
 }
 
@@ -95,6 +100,9 @@ const routes = {
   // SerpApi discovery feeds: shopping / event / holiday trends.
   "GET /api/research/serp": () => getSerpFeeds(),
   "POST /api/research/serp/refresh": () => fetchSerpFeeds(),
+  "GET /api/pod-automation": () => podAutomationStatus(),
+  "POST /api/pod-automation/config": (q, body) => updatePodAutomationConfig(body),
+  "POST /api/pod-automation/run": () => runPodAutomation({ manual: true }),
   "GET /api/models": () => state.aiModels,
   "GET /api/etsy/types": () => state.etsy.productTypes,
   "GET /api/etsy/designs": (q) => state.etsy.designs[q.get("type")] ?? [],

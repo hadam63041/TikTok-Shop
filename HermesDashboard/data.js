@@ -301,6 +301,18 @@ const HermesBridge = {
     if (!this.connected) throw new Error('Agent offline — start HermesAgent to pull SerpApi trends.');
     return this.api('/research/serp/refresh', {});
   },
+  async getPodAutomation() {
+    if (!this.connected) return { config: { enabled: false, intervalDays: 7, maxDesignsPerRun: 3, autoPublish: false }, runs: [], opportunities: [], nicheResearch: [] };
+    return this.api('/pod-automation');
+  },
+  async updatePodAutomationConfig(patch) {
+    if (!this.connected) throw new Error('Agent offline — start HermesAgent to update automation.');
+    return this.api('/pod-automation/config', patch);
+  },
+  async runPodAutomation() {
+    if (!this.connected) throw new Error('Agent offline — start HermesAgent to run automation.');
+    return this.api('/pod-automation/run', {});
+  },
   async getEtsyProductTypes() { return this.connected ? this.api('/etsy/types') : MOCK.etsy.productTypes; },
   async getEtsyDesigns(t) { return this.connected ? this.api(`/etsy/designs?type=${encodeURIComponent(t)}`) : (MOCK.etsy.designs[t] ?? []); },
   async getFiverrCategories() { return this.connected ? this.api('/fiverr/categories') : MOCK.fiverr.categories; },
@@ -356,11 +368,11 @@ const HermesBridge = {
     return this.api('/printify/delist', { shopId, productId });
   },
 
-  // --- Dropship suppliers (Zendrop, AliExpress) — one set of methods, keyed by
+  // --- Dropship suppliers (Zendrop, CJ Dropshipping) — one set of methods, keyed by
   //     supplier id. Routes are /api/dropship/:supplier/* ---
   async getSupplierStatus(id) {
     if (this.connected) return this.api(`/dropship/${id}/status`);
-    const names = { zendrop: 'Zendrop', aliexpress: 'AliExpress' };
+    const names = { zendrop: 'Zendrop', aliexpress: 'CJ Dropshipping' };
     return {
       id, provider: names[id] ?? id, configured: false, maskedKey: null,
       storedIn: 'Start the agent — key lives in HermesAgent/.env', products: 0, imported: 0, openOrders: 0,

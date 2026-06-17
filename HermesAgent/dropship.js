@@ -1,14 +1,14 @@
-// Dropship suppliers (Zendrop, AliExpress…) + multi-channel listing.
+// Dropship suppliers (Zendrop, CJ Dropshipping…) + multi-channel listing.
 //
 // One implementation, many suppliers. Each keeps a seeded catalog/orders in
 // state[supplierId]; channel listings live in state[id].listings (productId ->
 // [channelIds]) so BOTH seeded and live-pulled products can be listed.
 //
 // Live data:
-//   - AliExpress: REAL. We call the Open Platform DS API (api-sg gateway) with
-//     MD5-signed requests (App Key + App Secret) — ds.feedname.get to find a
-//     product feed, then ds.recommend.feed.get to pull products. Falls back to
-//     the seeded catalog only if creds are missing or the call fails.
+//   - CJ Dropshipping: REAL. We exchange CJ_API_KEY for a CJ access token, then
+//     call /product/listV2. Falls back to the seeded catalog only if creds are
+//     missing or the call fails. The route id remains "aliexpress" so existing
+//     dashboard state keeps working while that tab is repointed to CJ.
 //   - Zendrop: best-effort Bearer pull; their endpoint returns SPA HTML (no
 //     JSON feed), so it falls back to the seeded catalog, flagged SAMPLE.
 //
@@ -16,7 +16,6 @@
 // channel as DRAFTS (no publish, no spend) until each marketplace API is wired.
 
 import { state, persist } from "./store.js";
-import crypto from "node:crypto";
 import { tiktokConnection } from "./tiktok.js";
 
 // Sales channels a product can be listed to (shared across suppliers). A channel
@@ -69,10 +68,10 @@ export const SUPPLIERS = [
     noFeedNote: "Zendrop returns no JSON product feed (HTML only)",
   },
   {
-    id: "aliexpress", name: "AliExpress", icon: "🛒",
-    envKeys: ["ALIEXPRESS_APP_KEY", "ALIEXPRESS_APP_SECRET", "ALIEXPRESS_TRACKING_ID"],
-    liveLabel: "AliExpress DS API (live · shipping indicative)",
-    noFeedNote: "needs ALIEXPRESS_APP_KEY + ALIEXPRESS_APP_SECRET",
+    id: "aliexpress", name: "CJ Dropshipping", icon: "🛒",
+    envKeys: ["CJ_API_KEY", "CJ_MCP_TOKEN"],
+    liveLabel: "CJ Dropshipping OpenAPI (live)",
+    noFeedNote: "needs CJ_API_KEY",
   },
 ];
 const SUPPLIER_BY_ID = Object.fromEntries(SUPPLIERS.map((s) => [s.id, s]));
@@ -125,67 +124,87 @@ function enrich(id, p) {
   return { ...p, shipping, channels: channelsFor(id, p), marginPct: margOf(p) };
 }
 
-// ----- AliExpress Open Platform (DS API), MD5-signed -----
-const AE_GATEWAY = "https://api-sg.aliexpress.com/sync";
-let aeFeed = { name: null, at: 0 };
+// ----- CJ Dropshipping OpenAPI -----
+const CJ_API_BASE = "https://developers.cjdropshipping.com";
+const CJ_API_PREFIX = "/api2.0/v1";
+let cjSession = { apiKey: null, token: null, expiry: 0 };
 
-function aeSign(params, secret) {
-  const concat = Object.keys(params).sort().map((k) => k + params[k]).join("");
-  return crypto.createHash("md5").update(secret + concat + secret).digest("hex").toUpperCase();
+function cjApiKey() {
+  return process.env.CJ_API_KEY || process.env.CJ_MCP_TOKEN || "";
 }
-async function aeCall(method, biz) {
-  const key = process.env.ALIEXPRESS_APP_KEY, secret = process.env.ALIEXPRESS_APP_SECRET;
-  if (!key || !secret) throw new Error("missing ALIEXPRESS_APP_KEY/SECRET");
-  const all = { app_key: key, method, format: "json", v: "2.0", sign_method: "md5", timestamp: String(Date.now()), ...biz };
-  all.sign = aeSign(all, secret);
-  const res = await fetch(AE_GATEWAY, {
-    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(all).toString(), signal: AbortSignal.timeout(20000),
+function cjOk(response) {
+  return response?.result === true || response?.success === true || response?.code === 200 || response?.code === 0;
+}
+async function cjAccessToken() {
+  const apiKey = cjApiKey();
+  if (!apiKey) throw new Error("missing CJ_API_KEY");
+  if (cjSession.apiKey === apiKey && cjSession.token && cjSession.expiry > Date.now() + 60000) return cjSession.token;
+
+  const res = await fetch(`${CJ_API_BASE}${CJ_API_PREFIX}/authentication/getAccessToken`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+    signal: AbortSignal.timeout(20000),
   });
-  return res.json();
+  const json = await res.json();
+  if (!cjOk(json) || !json?.data?.accessToken) {
+    throw new Error(json?.message || `CJ auth failed with HTTP ${res.status}`);
+  }
+  cjSession = {
+    apiKey,
+    token: json.data.accessToken,
+    expiry: Date.parse(json.data.accessTokenExpiryDate || "") || Date.now() + 23 * 3600000,
+  };
+  return cjSession.token;
 }
-async function aeChooseFeed() {
-  if (aeFeed.name && Date.now() - aeFeed.at < 3600000) return aeFeed.name; // 1-hour cache
-  const r = await aeCall("aliexpress.ds.feedname.get", {});
-  const promos = r?.aliexpress_ds_feedname_get_response?.resp_result?.result?.promos?.promo ?? [];
-  const best = promos.filter((p) => p.promo_name).sort((a, b) => (b.product_num || 0) - (a.product_num || 0))[0];
-  aeFeed = { name: best?.promo_name ?? null, at: Date.now() };
-  return aeFeed.name;
+async function cjCall(endpoint, { method = "GET", params = {}, body = null } = {}) {
+  const token = await cjAccessToken();
+  const url = new URL(`${CJ_API_PREFIX}${endpoint}`, CJ_API_BASE);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
+  });
+  const res = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json", "CJ-Access-Token": token },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(20000),
+  });
+  const json = await res.json();
+  if (!cjOk(json)) throw new Error(json?.message || `CJ request failed with HTTP ${res.status}`);
+  return json;
 }
-function mapAeProduct(p) {
-  // cost = what you actually pay AliExpress (the sale price). Retail is a
-  // SUGGESTED resale at ~2.5× markup, rounded to a .99 price — AliExpress's
-  // own `original_price` is an inflated anchor, useless as a real resale price.
-  const cost = Number(p.target_sale_price ?? p.sale_price ?? p.original_price ?? 0);
+function getProductUrl(id, name) {
+  const slug = String(name || "product").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "product";
+  return `https://www.cjdropshipping.com/product/${slug}-p-${id}.html`;
+}
+function mapCjProduct(p) {
+  const cost = Number(p.sellPrice ?? p.nowPrice ?? p.productPrice ?? p.price ?? 0);
   const retail = cost > 0 ? Number((Math.ceil(cost * 2.5) - 0.01).toFixed(2)) : 0;
-  const img = p.product_main_image_url || p.product_small_image_urls?.string?.[0] || null;
+  const name = p.nameEn || p.productNameEn || p.productName || p.name || "CJ product";
+  const img = p.bigImage || p.productImage || p.image || p.productImageSet?.[0] || null;
+  const id = String(p.id || p.pid || p.productId || p.productSku || Math.random().toString(36).slice(2, 8));
   return {
-    id: String(p.product_id),
-    name: p.product_title ?? "AliExpress product",
+    id,
+    name,
     image: img,
-    link: p.product_detail_url || null,
+    link: p.productUrl || getProductUrl(id, name),
     emoji: "📦",
-    category: p.second_level_category_name || p.first_level_category_name || "—",
+    category: p.categoryName || p.category || p.productType || "—",
     cost, retail,
-    // The feed doesn't return per-item freight; show AliExpress's standard tiers
-    // (indicative). Exact rates are computed per destination at checkout.
     shipping: [
-      { method: "AliExpress Standard", days: "15–30", cost: 0 },
-      { method: "AliExpress Saver", days: "20–40", cost: 0 },
+      { method: "CJPacket", days: "7–15", cost: 0 },
+      { method: "Standard", days: "10–20", cost: 0 },
     ],
   };
 }
-async function aliexpressFetch() {
-  const feed = await aeChooseFeed();
-  if (!feed) return null;
-  const r = await aeCall("aliexpress.ds.recommend.feed.get", {
-    feed_name: feed, page_no: "1", page_size: "12",
-    target_currency: "USD", target_language: "EN", country: "US",
+async function cjFetch() {
+  const r = await cjCall("/product/listV2", {
+    method: "GET",
+    params: { page: "1", size: "12", startWarehouseInventory: "1" },
   });
-  const result = r?.aliexpress_ds_recommend_feed_get_response?.result ?? {};
-  let list = result.products?.traffic_product_d_t_o ?? result.products?.product ?? result.products ?? [];
-  if (!Array.isArray(list)) list = [];
-  return list.length ? list.map(mapAeProduct) : null;
+  const chunks = Array.isArray(r?.data?.content) ? r.data.content : [];
+  const list = chunks.flatMap((chunk) => Array.isArray(chunk?.productList) ? chunk.productList : []);
+  return list.length ? list.map(mapCjProduct) : null;
 }
 
 // ----- Zendrop best-effort Bearer pull (falls back to SAMPLE) -----
@@ -216,7 +235,7 @@ async function bearerFetch(s) {
 
 async function tryLiveFor(s) {
   try {
-    return s.id === "aliexpress" ? await aliexpressFetch() : await bearerFetch(s);
+    return s.id === "aliexpress" ? await cjFetch() : await bearerFetch(s);
   } catch { return null; }
 }
 
@@ -267,16 +286,18 @@ export function supplierKey(id) {
   return process.env[supplier(id).envKeys[0]] || null;
 }
 
-/** Honest live check. AliExpress: signed DS ping. Zendrop: inspect the body. */
+/** Honest live check. CJ: token + product search. Zendrop: inspect the body. */
 export async function supplierVerify(id) {
   const s = supplier(id);
   if (!supplierConfigured(id)) return { ok: false, detail: `No ${s.envKeys[0]} set.` };
   if (id === "aliexpress") {
     try {
-      const r = await aeCall("aliexpress.ds.feedname.get", {});
-      if (r?.error_response) return { ok: false, detail: `Reachable, but the API rejected the call: ${r.error_response.msg}.` };
-      const n = r?.aliexpress_ds_feedname_get_response?.resp_result?.result?.current_record_count;
-      return { ok: true, detail: `Live — AliExpress DS API reachable (${n ?? "?"} product feeds available). Products pull live.` };
+      const r = await cjCall("/product/listV2", {
+        method: "GET",
+        params: { page: "1", size: "1", startWarehouseInventory: "1" },
+      });
+      const n = r?.data?.totalRecords ?? r?.data?.total ?? "?";
+      return { ok: true, detail: `Live — CJ Dropshipping OpenAPI reachable (${n} catalog records visible). Products pull live.` };
     } catch (err) { return { ok: false, detail: `Request failed: ${err.message}` }; }
   }
   try {
