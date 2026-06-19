@@ -217,6 +217,10 @@ function seed() {
     // derived "learning & evolution" stats. Survives restarts; Reset clears it.
     agentLogs: {},
 
+    // CJ Dropshipping access token cache (survives restarts so we don't re-hit
+    // CJ's "getAccessToken once per 5 min" limit). Server-side only.
+    cj: { token: null, expiry: 0, apiKey: null },
+
     // TikTok Shop OAuth connection (per-shop access). Tokens are secrets —
     // they live here in state.json (server-side, gitignored), never sent to the
     // browser. See tiktok.js. Empty until the seller authorizes the app.

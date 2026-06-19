@@ -9,6 +9,8 @@ const state = {
   printifySub: 'catalog',      // catalog | mockup | designs
   mockup: { blueprintId: null, designUrl: '', scale: 42, posY: 38 }, // mockup studio state
   supplierTab: { zendrop: 'connection', aliexpress: 'connection' }, // per-supplier sub-tab; aliexpress id now backs CJ Dropshipping
+  supplierSearch: { aliexpress: 'pet' }, // CJ keyword search term
+  supplierSearchBusy: false,
   supplierKeyRevealed: {},     // supplierId -> full key once user clicks reveal
   supplierVerify: {},          // supplierId -> live-check result
   channelKeyRevealed: {},      // channelId -> full key once user clicks reveal
@@ -1632,6 +1634,7 @@ function supplierProducts(id) {
   const products = payload.products ?? [];
   const channels = cache.supplier[id]?.status?.channels ?? [];
   const sname = cache.supplier[id]?.status?.provider ?? id;
+  const searchable = id === 'aliexpress'; // CJ Dropshipping supports live keyword search
   return `
     <div class="card section-gap source-strip">
       <span class="panel-title" style="margin:0">${escapeHtml(sname)} catalog</span>
@@ -1639,10 +1642,34 @@ function supplierProducts(id) {
       <span class="muted">${escapeHtml(payload.source || '')}</span>
       <span class="muted" style="margin-left:auto">${products.length} products · list to ${channels.length} marketplaces</span>
     </div>
+    ${searchable ? `
+      <div class="card section-gap" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">🔎 Search ${escapeHtml(sname)}</span>
+        <input id="sup-search-${id}" class="mockup-input" style="flex:1;min-width:220px;margin:0" type="text"
+               value="${escapeHtml(state.supplierSearch[id] ?? 'pet')}"
+               placeholder="e.g. dog water fountain, cat bed, lick mat"
+               onkeydown="if (event.key === 'Enter') searchSupplier('${id}')" />
+        <button class="link-toggle linked" ${state.supplierSearchBusy ? 'disabled' : ''} onclick="searchSupplier('${id}')">${state.supplierSearchBusy ? 'Searching…' : 'Search'}</button>
+      </div>` : ''}
     ${products.length ? `
       <div class="design-grid">
         ${products.map((p) => supplierProductCard(id, p, channels)).join('')}
-      </div>` : `<div class="card"><span class="muted">No products. ${HermesBridge.connected ? '' : 'Start the agent to load the catalog.'}</span></div>`}`;
+      </div>` : `<div class="card"><span class="muted">${searchable ? `No CJ products for “${escapeHtml(state.supplierSearch[id] ?? 'pet')}”. Try another keyword.` : 'No products.'} ${HermesBridge.connected ? '' : 'Start the agent to load the catalog.'}</span></div>`}`;
+}
+
+async function searchSupplier(id) {
+  const q = (document.getElementById('sup-search-' + id)?.value || '').trim();
+  state.supplierSearch[id] = q;
+  state.supplierSearchBusy = true;
+  render();
+  try {
+    cache.supplier[id].products = await HermesBridge.getSupplierProducts(id, q || 'pet');
+  } catch (err) {
+    cache.supplier[id].products = { live: false, source: 'search failed: ' + err.message, products: [] };
+  }
+  state.supplierSearchBusy = false;
+  render();
+  setTimeout(() => { const el = document.getElementById('sup-search-' + id); if (el) { el.focus(); el.selectionStart = el.value.length; } }, 30);
 }
 
 // Product art: a real product photo when the live feed provides one, else the

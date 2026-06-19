@@ -385,9 +385,11 @@ const HermesBridge = {
       ],
     };
   },
-  // Live-aware catalog payload: { live, source, products }.
-  async getSupplierProducts(id) {
-    return this.connected ? this.api(`/dropship/${id}/products`) : { live: false, source: 'agent offline', products: [] };
+  // Live-aware catalog payload: { live, source, products }. `q` is the live
+  // keyword search (CJ Dropshipping); ignored by suppliers without search.
+  async getSupplierProducts(id, q = '') {
+    const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+    return this.connected ? this.api(`/dropship/${id}/products${qs}`) : { live: false, source: 'agent offline', products: [] };
   },
   async getSupplierOrders(id) { return this.connected ? this.api(`/dropship/${id}/orders`) : []; },
   async getSupplierKey(id) {

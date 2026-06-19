@@ -243,13 +243,13 @@ const routes = {
 };
 
 // Parameterized routes
-function dynamicRoute(method, urlPath, body) {
+function dynamicRoute(method, urlPath, body, query) {
   // Dropship suppliers (Zendrop, AliExpress): catalog, orders, key, verify, listing.
   let match = urlPath.match(/^\/api\/dropship\/([\w-]+)\/(status|products|orders|key|verify)$/);
   if (method === "GET" && match) {
     const id = match[1];
     if (match[2] === "status") return supplierStatus(id);
-    if (match[2] === "products") return supplierProductsPayload(id); // async
+    if (match[2] === "products") return supplierProductsPayload(id, query?.get("q") || ""); // async
     if (match[2] === "orders") return supplierOrders(id);
     if (match[2] === "key") return { key: supplierKey(id) };
     return supplierVerify(id); // async
@@ -347,7 +347,7 @@ const requestHandler = async (req, res) => {
     const handler = routes[`${req.method} ${urlPath}`];
     const result = handler !== undefined
       ? await handler(query, body)
-      : await dynamicRoute(req.method, urlPath, body);
+      : await dynamicRoute(req.method, urlPath, body, query);
     if (result === undefined) return json(res, 404, { error: `no route ${req.method} ${urlPath}` });
     return json(res, 200, result);
   } catch (err) {

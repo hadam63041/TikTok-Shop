@@ -138,23 +138,35 @@ function cjOk(response) {
 async function cjAccessToken() {
   const apiKey = cjApiKey();
   if (!apiKey) throw new Error("missing CJ_API_KEY");
-  if (cjSession.apiKey === apiKey && cjSession.token && cjSession.expiry > Date.now() + 60000) return cjSession.token;
-
-  const res = await fetch(`${CJ_API_BASE}${CJ_API_PREFIX}/authentication/getAccessToken`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiKey }),
-    signal: AbortSignal.timeout(20000),
-  });
-  const json = await res.json();
-  if (!cjOk(json) || !json?.data?.accessToken) {
-    throw new Error(json?.message || `CJ auth failed with HTTP ${res.status}`);
+  const fresh = (e) => e > Date.now() + 60000;
+  // 1) in-memory token
+  if (cjSession.apiKey === apiKey && cjSession.token && fresh(cjSession.expiry)) return cjSession.token;
+  // 2) persisted token (survives restarts; avoids CJ's 1/5-min auth limit)
+  if (state.cj?.token && state.cj.apiKey === apiKey && fresh(state.cj.expiry || 0)) {
+    cjSession = { apiKey, token: state.cj.token, expiry: state.cj.expiry };
+    return cjSession.token;
   }
-  cjSession = {
-    apiKey,
-    token: json.data.accessToken,
-    expiry: Date.parse(json.data.accessTokenExpiryDate || "") || Date.now() + 23 * 3600000,
-  };
+  // 3) mint a new one
+  let json = null;
+  try {
+    const res = await fetch(`${CJ_API_BASE}${CJ_API_PREFIX}/authentication/getAccessToken`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey }), signal: AbortSignal.timeout(20000),
+    });
+    json = await res.json();
+  } catch { /* network — fall through to any stale token */ }
+  if (!cjOk(json) || !json?.data?.accessToken) {
+    // rate-limited / transient — reuse a persisted token even if near-expiry
+    if (state.cj?.token && state.cj.apiKey === apiKey) {
+      cjSession = { apiKey, token: state.cj.token, expiry: state.cj.expiry || Date.now() + 3600000 };
+      return cjSession.token;
+    }
+    throw new Error(json?.message || "CJ auth failed");
+  }
+  const expiry = Date.parse(json.data.accessTokenExpiryDate || "") || Date.now() + 23 * 3600000;
+  cjSession = { apiKey, token: json.data.accessToken, expiry };
+  state.cj = { token: json.data.accessToken, expiry, apiKey };
+  persist();
   return cjSession.token;
 }
 async function cjCall(endpoint, { method = "GET", params = {}, body = null } = {}) {
@@ -197,14 +209,20 @@ function mapCjProduct(p) {
     ],
   };
 }
-async function cjFetch() {
+// CJ's general catalog includes adult/NSFW items — keep the dashboard clean.
+const CJ_BLOCK = /\b(adult|chastity|penis|vagina|sex|sexy|erotic|fishnet|panties|panty|lingerie|vibrator|dildo|bondage|binding toy|nsfw|condom|nipple|butt plug|massage oil|fetish|thong|crotchless)\b/i;
+
+async function cjFetch(keyWord = "pet") {
   const r = await cjCall("/product/listV2", {
     method: "GET",
-    params: { page: "1", size: "12", startWarehouseInventory: "1" },
+    params: { page: "1", size: "40", keyWord, startWarehouseInventory: "1" },
   });
   const chunks = Array.isArray(r?.data?.content) ? r.data.content : [];
-  const list = chunks.flatMap((chunk) => Array.isArray(chunk?.productList) ? chunk.productList : []);
-  return list.length ? list.map(mapCjProduct) : null;
+  const list = chunks
+    .flatMap((chunk) => Array.isArray(chunk?.productList) ? chunk.productList : [])
+    .map(mapCjProduct)
+    .filter((p) => p.cost > 0 && p.name && !CJ_BLOCK.test(p.name));
+  return list.length ? list.slice(0, 24) : null;
 }
 
 // ----- Zendrop best-effort Bearer pull (falls back to SAMPLE) -----
@@ -233,27 +251,32 @@ async function bearerFetch(s) {
   return null;
 }
 
-async function tryLiveFor(s) {
+async function tryLiveFor(s, keyWord) {
   try {
-    return s.id === "aliexpress" ? await cjFetch() : await bearerFetch(s);
+    return s.id === "aliexpress" ? await cjFetch(keyWord || "pet") : await bearerFetch(s);
   } catch { return null; }
 }
 
-const liveCache = {}; // supplierId -> { at, data }
-async function fetchLiveCached(id) {
-  const c = liveCache[id];
+const liveCache = {}; // `${id}:${keyWord}` -> { at, data }
+async function fetchLiveCached(id, keyWord) {
+  const cacheKey = `${id}:${keyWord || ""}`;
+  const c = liveCache[cacheKey];
   if (c && Date.now() - c.at < 300000) return c.data; // 5-min cache
-  const data = await tryLiveFor(supplier(id));
-  liveCache[id] = { at: Date.now(), data };
+  const data = await tryLiveFor(supplier(id), keyWord);
+  liveCache[cacheKey] = { at: Date.now(), data };
   return data;
 }
 
-/** Catalog payload the dashboard renders: { live, source, products }. */
-export async function supplierProductsPayload(id) {
+/** Catalog payload the dashboard renders: { live, source, products }.
+ *  `keyWord` is the live search term for keyword-searchable suppliers (CJ). */
+export async function supplierProductsPayload(id, keyWord = "") {
   const s = supplier(id);
-  const live = await fetchLiveCached(id);
+  // CJ is keyword-searchable and defaults to pet products.
+  const effKeyWord = keyWord || (id === "aliexpress" ? "pet" : "");
+  const live = await fetchLiveCached(id, effKeyWord);
   if (live && live.length) {
-    return { live: true, source: s.liveLabel, products: live.map((p) => enrich(id, p)) };
+    const term = effKeyWord ? ` · “${effKeyWord}”` : "";
+    return { live: true, source: `${s.liveLabel}${term}`, products: live.map((p) => enrich(id, p)), keyWord: effKeyWord };
   }
   return {
     live: false,
@@ -261,6 +284,7 @@ export async function supplierProductsPayload(id) {
       ? `Sample catalog — ${s.noFeedNote}`
       : `Sample catalog — set ${s.envKeys.join(" + ")}`,
     products: productsOf(id).map((p) => enrich(id, p)),
+    keyWord,
   };
 }
 
