@@ -9,7 +9,7 @@ const state = {
   printifySub: 'catalog',      // catalog | mockup | designs
   mockup: { blueprintId: null, designUrl: '', scale: 42, posY: 38 }, // mockup studio state
   supplierTab: { zendrop: 'connection', aliexpress: 'connection' }, // per-supplier sub-tab; aliexpress id now backs CJ Dropshipping
-  supplierSearch: { aliexpress: 'pet' }, // CJ keyword search term
+  supplierSearch: {}, // CJ keyword search term ('' = curated trending-pet feed)
   supplierSearchBusy: false,
   supplierKeyRevealed: {},     // supplierId -> full key once user clicks reveal
   supplierVerify: {},          // supplierId -> live-check result
@@ -1646,10 +1646,16 @@ function supplierProducts(id) {
       <div class="card section-gap" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span class="muted" style="font-size:12px">🔎 Search ${escapeHtml(sname)}</span>
         <input id="sup-search-${id}" class="mockup-input" style="flex:1;min-width:220px;margin:0" type="text"
-               value="${escapeHtml(state.supplierSearch[id] ?? 'pet')}"
-               placeholder="e.g. dog water fountain, cat bed, lick mat"
+               value="${escapeHtml(state.supplierSearch[id] ?? '')}"
+               placeholder="search a category — e.g. dog water fountain, cat bed, lick mat"
                onkeydown="if (event.key === 'Enter') searchSupplier('${id}')" />
         <button class="link-toggle linked" ${state.supplierSearchBusy ? 'disabled' : ''} onclick="searchSupplier('${id}')">${state.supplierSearchBusy ? 'Searching…' : 'Search'}</button>
+        ${state.supplierSearch[id] ? `<button class="link-toggle" onclick="state.supplierSearch['${id}']='';searchSupplier('${id}')">★ Trending</button>` : ''}
+        <span class="muted" style="font-size:11px;flex-basis:100%;line-height:1.4">
+          ${state.supplierSearch[id]
+            ? `Showing CJ results for “${escapeHtml(state.supplierSearch[id])}”. Clear & hit ★ Trending for the curated feed.`
+            : 'Showing curated <b>trending pet picks</b> aggregated from CJ across the sub-categories trending on Amazon / TikTok / Google. Search to narrow.'}
+        </span>
       </div>` : ''}
     ${products.length ? `
       <div class="design-grid">
@@ -1663,7 +1669,7 @@ async function searchSupplier(id) {
   state.supplierSearchBusy = true;
   render();
   try {
-    cache.supplier[id].products = await HermesBridge.getSupplierProducts(id, q || 'pet');
+    cache.supplier[id].products = await HermesBridge.getSupplierProducts(id, q); // '' = trending feed
   } catch (err) {
     cache.supplier[id].products = { live: false, source: 'search failed: ' + err.message, products: [] };
   }
@@ -1691,6 +1697,7 @@ function supplierProductCard(id, p, channels) {
       <div class="design-body">
         <h4>${escapeHtml(p.name)}</h4>
         <div class="muted" style="font-size:12px;margin-bottom:8px">${escapeHtml(p.category || '')}${p.imported ? ` · in ${escapeHtml(p.store || 'store')}` : ''}</div>
+        ${p.trendKeyword ? `<div class="design-meta" style="margin-bottom:8px"><span class="badge generating">🔥 ${escapeHtml(p.trendKeyword)}</span></div>` : ''}
         <div class="design-stats">
           <span>Cost <b>${money(p.cost, 2)}</b></span>
           <span>Retail <b>${money(p.retail, 2)}</b></span>

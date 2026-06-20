@@ -212,17 +212,55 @@ function mapCjProduct(p) {
 // CJ's general catalog includes adult/NSFW items — keep the dashboard clean.
 const CJ_BLOCK = /\b(adult|chastity|penis|vagina|sex|sexy|erotic|fishnet|panties|panty|lingerie|vibrator|dildo|bondage|binding toy|nsfw|condom|nipple|butt plug|massage oil|fetish|thong|crotchless)\b/i;
 
-async function cjFetch(keyWord = "pet") {
+// Trending pet sub-categories, derived from cross-marketplace + Google research
+// (Amazon best-sellers, Google Trends, dropship trackers). Each maps to a CJ
+// keyword search; results are aggregated into one curated feed.
+const CJ_TRENDING_PET_KEYWORDS = [
+  "pet water fountain", "dog cooling mat", "slow feeder dog bowl", "automatic pet feeder",
+  "pet gps tracker", "interactive cat toy", "pet grooming brush", "calming dog bed",
+  "cat litter mat", "pet hair remover", "dog harness", "pet carrier backpack",
+  "lick mat", "elevated pet bowl", "pet nail grinder",
+];
+
+async function cjSearch(keyWord, size = 12) {
   const r = await cjCall("/product/listV2", {
     method: "GET",
-    params: { page: "1", size: "40", keyWord, startWarehouseInventory: "1" },
+    params: { page: "1", size: String(size), keyWord, startWarehouseInventory: "1" },
   });
   const chunks = Array.isArray(r?.data?.content) ? r.data.content : [];
-  const list = chunks
+  return chunks
     .flatMap((chunk) => Array.isArray(chunk?.productList) ? chunk.productList : [])
     .map(mapCjProduct)
     .filter((p) => p.cost > 0 && p.name && !CJ_BLOCK.test(p.name));
-  return list.length ? list.slice(0, 24) : null;
+}
+
+async function cjFetch(keyWord = "pet") {
+  const list = await cjSearch(keyWord, 40);
+  return list.length ? list.slice(0, 40) : null;
+}
+
+// Curated trending feed: search CJ across each trending sub-category and
+// aggregate (deduped) into ~target products. Sequential with a small delay to
+// respect CJ rate limits; individual keyword failures are skipped, not fatal.
+async function cjTrendingPets(target = 50) {
+  const seen = new Set();
+  const out = [];
+  for (const kw of CJ_TRENDING_PET_KEYWORDS) {
+    if (out.length >= target) break;
+    // One retry per keyword — CJ rate-limits bursts, so an empty result often
+    // just means "slow down"; a second try after a pause usually succeeds.
+    let items = [];
+    for (let attempt = 0; attempt < 2 && items.length === 0; attempt++) {
+      try { items = await cjSearch(kw, 10); } catch { items = []; }
+      if (items.length === 0) await new Promise((r) => setTimeout(r, 1100));
+    }
+    for (const p of items) {
+      if (out.length >= target) break;
+      if (!seen.has(p.id)) { seen.add(p.id); p.trendKeyword = kw; out.push(p); }
+    }
+    await new Promise((r) => setTimeout(r, 1100)); // stay under CJ's rate limit
+  }
+  return out.length ? out : null;
 }
 
 // ----- Zendrop best-effort Bearer pull (falls back to SAMPLE) -----
@@ -253,7 +291,8 @@ async function bearerFetch(s) {
 
 async function tryLiveFor(s, keyWord) {
   try {
-    return s.id === "aliexpress" ? await cjFetch(keyWord || "pet") : await bearerFetch(s);
+    if (s.id === "aliexpress") return keyWord ? await cjFetch(keyWord) : await cjTrendingPets(50);
+    return await bearerFetch(s);
   } catch { return null; }
 }
 
@@ -271,12 +310,11 @@ async function fetchLiveCached(id, keyWord) {
  *  `keyWord` is the live search term for keyword-searchable suppliers (CJ). */
 export async function supplierProductsPayload(id, keyWord = "") {
   const s = supplier(id);
-  // CJ is keyword-searchable and defaults to pet products.
-  const effKeyWord = keyWord || (id === "aliexpress" ? "pet" : "");
-  const live = await fetchLiveCached(id, effKeyWord);
+  // CJ: empty keyword → curated trending-pet feed; a keyword → that search.
+  const live = await fetchLiveCached(id, keyWord);
   if (live && live.length) {
-    const term = effKeyWord ? ` · “${effKeyWord}”` : "";
-    return { live: true, source: `${s.liveLabel}${term}`, products: live.map((p) => enrich(id, p)), keyWord: effKeyWord };
+    const term = keyWord ? ` · “${keyWord}”` : (id === "aliexpress" ? " · trending pet picks" : "");
+    return { live: true, source: `${s.liveLabel}${term}`, products: live.map((p) => enrich(id, p)), keyWord };
   }
   return {
     live: false,
